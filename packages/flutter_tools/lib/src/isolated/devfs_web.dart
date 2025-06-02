@@ -83,11 +83,12 @@ class DevConfig {
 
   factory DevConfig.fromYaml(YamlMap serverYaml) {
     final List<String> headers =
-        (serverYaml['headers'] as YamlList?)?.map((e) => e.toString()).toList() ?? <String>[];
+        (serverYaml['headers'] as YamlList?)?.map((dynamic e) => e.toString()).toList() ??
+        <String>[];
 
     final Map<String, ProxyConfig> proxyMap = <String, ProxyConfig>{};
     if (serverYaml['proxy'] is YamlMap) {
-      (serverYaml['proxy'] as YamlMap).forEach((key, value) {
+      (serverYaml['proxy'] as YamlMap).forEach((dynamic key, dynamic value) {
         if (value is YamlMap) {
           proxyMap[key.toString()] = ProxyConfig.fromYaml(value);
         }
@@ -157,7 +158,7 @@ class BrowserConfig {
 
   factory BrowserConfig.fromYaml(YamlMap yaml) {
     final List<String> flags =
-        (yaml['flags'] as YamlList?)?.map((e) => e.toString()).toList() ?? <String>[];
+        (yaml['flags'] as YamlList?)?.map((dynamic e) => e.toString()).toList() ?? <String>[];
     return BrowserConfig(debugPort: yaml['debug-port'] as int, flags: flags);
   }
 
@@ -188,7 +189,7 @@ class ProxyConfig {
 shelf.Middleware _injectHeadersMiddleware(List<String> headersToInject) {
   return (shelf.Handler innerHandler) {
     return (shelf.Request request) async {
-      final Map<String, String> newHeaders = Map.from(request.headers);
+      final Map<String, String> newHeaders = Map<String, String>.of(request.headers);
 
       for (final String headerEntry in headersToInject) {
         final List<String> parts = headerEntry.split('=');
@@ -223,7 +224,9 @@ Future<DevConfig?> _loadDevConfig() async {
   final io.File devConfigFile = io.File(devConfigFilePath);
 
   if (!devConfigFile.existsSync()) {
-    globals.printStatus('No devconfig.yaml found. Running with default web server configuration.');
+    globals.printStatus(
+      'No $devConfigFilePath found. Running with default web server configuration.',
+    );
     return null;
   }
 
@@ -255,14 +258,14 @@ Future<DevConfig?> _loadDevConfig() async {
     }
     return config;
   } on YamlException catch (e) {
-    String errorMessage = 'Error: Failed to parse devconfig.yaml: ${e.message}';
+    String errorMessage = 'Error: Failed to parse $devConfigFilePath: ${e.message}';
     if (e.span != null) {
       errorMessage += '\n  At line ${e.span!.start.line + 1}, column ${e.span!.start.column + 1}';
       errorMessage += '\n  Problematic text: "${e.span!.text}"';
     }
     globals.printError(errorMessage);
     throwToolExit('Failed to parse devconfig.yaml due to syntax error.');
-  } catch (e) {
+  } on Exception catch (e) {
     // General unexpected error: Log and revert to default (don't fail build)
     globals.printError('An unexpected error occurred while reading devconfig.yaml: $e');
     globals.printStatus(
