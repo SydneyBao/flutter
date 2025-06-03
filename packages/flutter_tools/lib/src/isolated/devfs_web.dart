@@ -3,7 +3,6 @@
 // found in the LICENSE file.
 
 import 'dart:async';
-import 'dart:io' as io;
 import 'dart:typed_data';
 
 import 'package:dwds/data/build_result.dart';
@@ -17,7 +16,6 @@ import 'package:shelf/shelf_io.dart' as shelf;
 import 'package:shelf_proxy/shelf_proxy.dart';
 import 'package:shelf_router/shelf_router.dart' as shelf_router;
 import 'package:vm_service/vm_service.dart' as vm_service;
-import 'package:yaml/yaml.dart';
 
 import '../artifacts.dart';
 import '../asset.dart';
@@ -46,6 +44,7 @@ import '../web/memory_fs.dart';
 import '../web/module_metadata.dart';
 import '../web/web_constants.dart';
 import '../web_template.dart';
+import 'devfs_config.dart';
 
 typedef DwdsLauncher =
     Future<Dwds> Function({
@@ -69,297 +68,6 @@ const String _kDefaultIndex = '''
     </body>
 </html>
 ''';
-
-class DevConfig {
-  DevConfig({
-    this.headers = const <String>[],
-    this.host = 'any',
-    this.port = 0,
-    this.https,
-    this.browser,
-    this.experimentalHotReload,
-    this.proxy = const <ProxyConfig>[],
-  });
-
-  //constructs a DevConfig object
-  factory DevConfig.fromYaml(YamlMap serverYaml) {
-    final List<String> headers =
-        (serverYaml['headers'] as YamlList?)?.map((dynamic e) => e.toString()).toList() ??
-        <String>[];
-
-    final List<ProxyConfig> proxyRules = <ProxyConfig>[];
-    if (serverYaml['proxy'] is YamlMap) {
-      (serverYaml['proxy'] as YamlMap).forEach((dynamic key, dynamic value) {
-        if (value is YamlMap) {
-          proxyRules.add(ProxyConfig.fromYaml(key.toString(), value));
-        }
-      });
-    }
-
-    return DevConfig(
-      headers: headers,
-      host: serverYaml['host'] as String,
-      port: serverYaml['port'] as int,
-      https:
-          serverYaml['https'] is YamlMap
-              ? HttpsConfig.fromYaml(serverYaml['https'] as YamlMap)
-              : null,
-      browser:
-          serverYaml['browser'] is YamlMap
-              ? BrowserConfig.fromYaml(serverYaml['browser'] as YamlMap)
-              : null,
-      experimentalHotReload: serverYaml['experimental-hot-reload'] as bool? ?? false,
-      proxy: proxyRules,
-    );
-  }
-  final List<String> headers;
-  final String host;
-  final int port;
-  final HttpsConfig? https;
-  final BrowserConfig? browser;
-  final bool? experimentalHotReload;
-  final List<ProxyConfig>? proxy;
-
-  @override
-  String toString() {
-    return '''
-      DevConfig:
-      Headers: $headers
-      Host: $host
-      Port: $port
-      HTTPS: $https
-      Browser: $browser
-      Experimental Hot Reload: $experimentalHotReload
-      Proxy: $proxy
-    ''';
-  }
-}
-
-class HttpsConfig {
-  HttpsConfig({this.certPath, this.certKeyPath});
-
-  factory HttpsConfig.fromYaml(YamlMap yaml) {
-    return HttpsConfig(
-      certPath: yaml['cert-path'] as String?,
-      certKeyPath: yaml['cert-key-path'] as String?,
-    );
-  }
-
-  final String? certPath;
-  final String? certKeyPath;
-
-  @override
-  String toString() {
-    return '{cert-path: $certPath, cert-key-path: $certKeyPath}';
-  }
-}
-
-class BrowserConfig {
-  BrowserConfig({required this.debugPort, required this.flags});
-
-  factory BrowserConfig.fromYaml(YamlMap yaml) {
-    final List<String> flags =
-        (yaml['flags'] as YamlList?)?.map((dynamic e) => e.toString()).toList() ?? <String>[];
-    return BrowserConfig(debugPort: yaml['debug-port'] as int, flags: flags);
-  }
-
-  final int debugPort;
-  final List<String> flags;
-
-  @override
-  String toString() {
-    return '{debug-port: $debugPort, flags: $flags}';
-  }
-}
-
-// class ProxyConfig {
-//   ProxyConfig({required this.target});
-
-//   factory ProxyConfig.fromYaml(YamlMap yaml) {
-//     return ProxyConfig(target: yaml['target'] as String);
-//   }
-
-//   final String target;
-
-//   @override
-//   String toString() {
-//     return '{target: $target}';
-//   }
-// }
-
-abstract class ProxyConfig {
-  final String target;
-  final Function(String)? rewrite;
-
-  ProxyConfig({required this.target, this.rewrite});
-
-  bool matches(String path);
-
-  factory ProxyConfig.fromYaml(String key, YamlMap yaml) {
-    final String? rewriteValue = yaml['rewrite']?.toString();
-    Function(String)? rewriteFn;
-
-    //regex rewrites. rewrite is a function "pattern -> replacement"
-    if (rewriteValue != null && rewriteValue.isNotEmpty) {
-      final parts = rewriteValue.split('->');
-      if (parts.length == 2) {
-        final RegExp pattern = RegExp(parts[0].trim());
-        final String replacement = parts[1].trim();
-        rewriteFn = (path) => path.replaceFirst(pattern, replacement);
-      }
-      //rewrite: true
-    } else if (yaml['rewrite'] is bool && yaml['rewrite'] == true) {
-      rewriteFn = (path) => path.replaceFirst(key, '');
-    }
-
-    //if its a regex aka starts with ^
-    if (key.startsWith('^')) {
-      try {
-        return RegexProxyConfig(
-          pattern: RegExp(key),
-          target: yaml['target'] as String,
-          rewrite: rewriteFn,
-        );
-      } catch (e) {
-        globals.printStatus('Warning: Invalid regex pattern "$key". Treating as string prefix: $e');
-        return StringPrefixProxyConfig(
-          prefix: key,
-          target: yaml['target'] as String,
-          rewrite: rewriteFn,
-        );
-      }
-    } else {
-      return StringPrefixProxyConfig(
-        prefix: key,
-        target: yaml['target'] as String,
-        rewrite: rewriteFn,
-      );
-    }
-  }
-}
-
-//string path
-class StringPrefixProxyConfig extends ProxyConfig {
-  StringPrefixProxyConfig({required this.prefix, required super.target, super.rewrite});
-
-  final String prefix;
-  @override
-  bool matches(String path) {
-    return path.startsWith(prefix);
-  }
-
-  @override
-  String toString() {
-    return '{prefix: $prefix, target: $target, rewrite: ${rewrite != null ? 'yes' : 'no'}}';
-  }
-}
-
-//regex
-class RegexProxyConfig extends ProxyConfig {
-  RegexProxyConfig({required this.pattern, required super.target, super.rewrite});
-
-  final RegExp pattern;
-
-  @override
-  bool matches(String path) {
-    return pattern.hasMatch(path);
-  }
-
-  @override
-  String toString() {
-    return '{pattern: ${pattern.pattern}, target: $target, rewrite: ${rewrite != null ? 'yes' : 'no'}}';
-  }
-}
-
-shelf.Middleware _injectHeadersMiddleware(List<String> headersToInject) {
-  return (shelf.Handler innerHandler) {
-    return (shelf.Request request) async {
-      final Map<String, String> newHeaders = Map<String, String>.of(request.headers);
-
-      for (final String headerEntry in headersToInject) {
-        final List<String> parts = headerEntry.split('=');
-        if (parts.length == 2) {
-          newHeaders[parts[0].toLowerCase()] = parts[1];
-        } else {
-          globals.printError('Error in header: "$headerEntry"');
-        }
-      }
-
-      final shelf.Request modifiedRequest = shelf.Request(
-        request.method,
-        request.requestedUri,
-        headers: newHeaders,
-        body: request.read(),
-        context: request.context,
-      );
-
-      // print('--- Request Headers After Middleware Injection ---');
-      // newHeaders.forEach((key, value) {
-      //   print('$key: $value');
-      // });
-      // print('----------------------------------------------------');
-
-      return await innerHandler(modifiedRequest);
-    };
-  };
-}
-
-//locate, read, parse, and validate devconfig.yaml
-Future<DevConfig> _loadDevConfig() async {
-  const String devConfigFilePath = 'devconfig.yaml';
-  final io.File devConfigFile = io.File(devConfigFilePath);
-
-  if (!devConfigFile.existsSync()) {
-    globals.printStatus(
-      'No $devConfigFilePath found. Running with default web server configuration.',
-    );
-    return DevConfig();
-  }
-
-  try {
-    final String devConfigContent = await devConfigFile.readAsString();
-    final YamlDocument yamlDoc = loadYamlDocument(devConfigContent);
-    final YamlMap? rootYaml = yamlDoc.contents as YamlMap?;
-
-    if (rootYaml == null || !rootYaml.containsKey('server') || rootYaml['server'] is! YamlMap) {
-      const String errorMessage =
-          'Error: devconfig.yaml found, but the "server" key is missing or malformed. '
-          'A valid "server" configuration is required.';
-      globals.printError(errorMessage);
-      throwToolExit('Invalid devconfig.yaml: "server" key missing or malformed.');
-    }
-
-    final YamlMap serverYaml = rootYaml['server'] as YamlMap;
-    final DevConfig config = DevConfig.fromYaml(serverYaml);
-
-    globals.printStatus('\nParsed devconfig.yaml:');
-    globals.printStatus(config.toString());
-
-    if (config.proxy?.isNotEmpty ?? false) {
-      globals.printStatus(
-        'Initializing web server with custom configuration. Found ${config.proxy?.length ?? 0} proxy rules.',
-      );
-    } else {
-      globals.printStatus('No proxy rules found.');
-    }
-    return config;
-  } on YamlException catch (e) {
-    String errorMessage = 'Error: Failed to parse $devConfigFilePath: ${e.message}';
-    if (e.span != null) {
-      errorMessage += '\n  At line ${e.span!.start.line + 1}, column ${e.span!.start.column + 1}';
-      errorMessage += '\n  Problematic text: "${e.span!.text}"';
-    }
-    globals.printError(errorMessage);
-    throwToolExit('Failed to parse devconfig.yaml due to syntax error.');
-  } on Exception catch (e) {
-    // General unexpected error: Log and revert to default (don't fail build)
-    globals.printError('An unexpected error occurred while reading devconfig.yaml: $e');
-    globals.printStatus(
-      'Reverting to default flutter_tools web server configuration due to unexpected error.',
-    );
-    return DevConfig();
-  }
-}
 
 /// An expression compiler connecting to FrontendServer.
 ///
@@ -644,7 +352,7 @@ class WebAssetServer implements AssetReader {
       );
       shelf.Pipeline pipeline = const shelf.Pipeline();
       if (effectiveHeaders.isNotEmpty) {
-        pipeline = pipeline.addMiddleware(_injectHeadersMiddleware(effectiveHeaders));
+        pipeline = pipeline.addMiddleware(injectHeadersMiddleware(effectiveHeaders));
       }
       final shelf.Handler finalReleaseHandler = pipeline.addHandler(releaseAssetServer.handle);
       runZonedGuarded(
@@ -750,7 +458,7 @@ class WebAssetServer implements AssetReader {
     );
     shelf.Pipeline pipeline = const shelf.Pipeline();
     if (effectiveHeaders.isNotEmpty) {
-      pipeline = pipeline.addMiddleware(_injectHeadersMiddleware(effectiveHeaders));
+      pipeline = pipeline.addMiddleware(injectHeadersMiddleware(effectiveHeaders));
     }
     if (enableDwds) {
       pipeline = pipeline.addMiddleware(middleware);
@@ -1370,7 +1078,7 @@ class WebDevFS implements DevFS {
 
   @override
   Future<Uri> create() async {
-    final DevConfig devConfig = await _loadDevConfig();
+    final DevConfig devConfig = await loadDevConfig();
 
     webAssetServer = await WebAssetServer.start(
       chromiumLauncher,
