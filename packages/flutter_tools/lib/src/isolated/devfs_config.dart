@@ -6,7 +6,8 @@ import 'package:shelf/shelf.dart' as shelf;
 import 'package:yaml/yaml.dart';
 
 import '../base/common.dart';
-import '../globals.dart' as globals; // Import globals for printStatus/printError
+import '../globals.dart' as globals;
+import 'package:source_span/source_span.dart';
 
 /// Class that represents the web server configuration specified in a `devconfig.yaml` file.
 @immutable
@@ -14,7 +15,7 @@ class DevConfig {
   /// Create a new [DevConfig] object.
   const DevConfig({
     this.headers = const <String>[],
-    this.host = 'any',
+    this.host = 'localhost',
     this.port = 0,
     this.https,
     this.browser,
@@ -40,7 +41,9 @@ class DevConfig {
       throwToolExit('Browser must be a Map. Found ${yaml['browser'].runtimeType}');
     }
     if (yaml['experimental-hot-reload'] is! bool && yaml['experimental-hot-reload'] != null) {
-      throwToolExit('experimental-hot-reload must be a bool. Found ${yaml['experimental-hot-reload'].runtimeType}');
+      throwToolExit(
+        'experimental-hot-reload must be a bool. Found ${yaml['experimental-hot-reload'].runtimeType}',
+      );
     }
     if (yaml['proxy'] is! YamlMap && yaml['proxy'] != null) {
       throwToolExit('proxy must be a Map. Found ${yaml['proxy'].runtimeType}');
@@ -48,13 +51,14 @@ class DevConfig {
 
     return DevConfig(
       headers: (yaml['headers'] as YamlList?)?.cast<String>() ?? const <String>[],
-      host: yaml['host'] as String,
-      port: yaml['port'] as int,
+      host: yaml['host'] as String?,
+      port: yaml['port'] as int?,
       https: yaml['https'] == null ? null : HttpsConfig.fromYaml(yaml['https'] as YamlMap),
       browser: yaml['browser'] == null ? null : BrowserConfig.fromYaml(yaml['browser'] as YamlMap),
       experimentalHotReload: yaml['experimental-hot-reload'] as bool?,
       proxy: <String, ProxyConfig>{
-        for (final MapEntry<dynamic, dynamic> entry in (yaml['proxy'] as YamlMap? ?? <dynamic, dynamic>{}).entries)
+        for (final MapEntry<dynamic, dynamic> entry
+            in (yaml['proxy'] as YamlMap? ?? <dynamic, dynamic>{}).entries)
           if (entry.key is String && entry.value is YamlMap)
             entry.key as String: ProxyConfig.fromYaml(entry.value as YamlMap),
       },
@@ -62,8 +66,8 @@ class DevConfig {
   }
 
   final List<String> headers;
-  final String host;
-  final int port;
+  final String? host;
+  final int? port;
   final HttpsConfig? https;
   final BrowserConfig? browser;
   final bool? experimentalHotReload;
@@ -87,10 +91,7 @@ class DevConfig {
 @immutable
 class HttpsConfig {
   /// Create a new [HttpsConfig] object.
-  const HttpsConfig({
-    required this.certPath,
-    required this.certKeyPath,
-  });
+  const HttpsConfig({required this.certPath, required this.certKeyPath});
 
   /// Create a [HttpsConfig] from a `https` YAML map.
   factory HttpsConfig.fromYaml(YamlMap yaml) {
@@ -98,7 +99,9 @@ class HttpsConfig {
       throwToolExit('Https cert-path must be a String. Found ${yaml['cert-path'].runtimeType}');
     }
     if (yaml['cert-key-path'] is! String && yaml['cert-key-path'] != null) {
-      throwToolExit('Https cert-key-path must be a String. Found ${yaml['cert-key-path'].runtimeType}');
+      throwToolExit(
+        'Https cert-key-path must be a String. Found ${yaml['cert-key-path'].runtimeType}',
+      );
     }
     return HttpsConfig(
       certPath: yaml['cert-path'] as String?,
@@ -142,10 +145,7 @@ class ProxyConfig {
 @immutable
 class BrowserConfig {
   /// Create a new [BrowserConfig] object.
-  const BrowserConfig({
-    required this.path,
-    required this.args,
-  });
+  const BrowserConfig({required this.path, required this.args});
 
   /// Create a [BrowserConfig] from a `browser` YAML map.
   factory BrowserConfig.fromYaml(YamlMap yaml) {
@@ -194,14 +194,39 @@ Future<DevConfig> loadDevConfig() async {
   try {
     final String devConfigContent = await devConfigFile.readAsString();
     final YamlDocument yamlDoc = loadYamlDocument(devConfigContent);
-    final YamlMap? rootYaml = yamlDoc.contents as YamlMap?;
+    if (yamlDoc.contents is! YamlMap) {
+      final SourceSpan span;
+      if (yamlDoc.contents?.span != null) {
+        span = yamlDoc.contents!.span;
+      } else {
+        final SourceFile sourceFile = SourceFile.fromString(
+          devConfigContent,
+          url: Uri.file(devConfigFilePath),
+        );
+        span = sourceFile.span(0, devConfigContent.length);
+      }
 
-    if (rootYaml == null || !rootYaml.containsKey('server') || rootYaml['server'] is! YamlMap) {
-      const String errorMessage =
-          'Error: devconfig.yaml found, but the "server" key is missing or malformed. '
-          'A valid "server" configuration is required.';
-      globals.printError(errorMessage);
-      return const DevConfig();
+      throw YamlException(
+        'The root of $devConfigFilePath must be a YAML map (e.g., "server:"). '
+        'Found a ${yamlDoc.contents.runtimeType} instead.',
+        span,
+      );
+    }
+    final YamlMap rootYaml = yamlDoc.contents as YamlMap;
+
+    if (!rootYaml.containsKey('server') || rootYaml['server'] is! YamlMap) {
+      // Find the span for the 'server' key if it exists but is malformed,
+      // otherwise use the root span.
+      final SourceSpan span =
+          (rootYaml.containsKey('server') && rootYaml['server'] is YamlNode)
+              ? (rootYaml['server'] as YamlNode).span
+              : rootYaml.span;
+
+      throw YamlException(
+        'The "$devConfigFilePath" file is found, but the "server" key is '
+        'missing or malformed. It must be a YAML map.',
+        span,
+      );
     }
 
     final YamlMap serverYaml = rootYaml['server'] as YamlMap;
@@ -217,7 +242,6 @@ Future<DevConfig> loadDevConfig() async {
       globals.printStatus('No proxy rules found.');
     }
     return config;
-
   } on YamlException catch (e) {
     String errorMessage = 'Error: Failed to parse $devConfigFilePath: ${e.message}';
     if (e.span != null) {
@@ -225,7 +249,7 @@ Future<DevConfig> loadDevConfig() async {
       errorMessage += '\n  Problematic text: "${e.span!.text}"';
     }
     globals.printError(errorMessage);
-    return const DevConfig();
+    throw e;
   } on Exception catch (e) {
     globals.printError('An unexpected error occurred while reading devconfig.yaml: $e');
     globals.printStatus(
@@ -249,13 +273,7 @@ shelf.Middleware injectHeadersMiddleware(List<String> headersToInject) {
         }
       }
 
-      final shelf.Request modifiedRequest = shelf.Request(
-        request.method,
-        request.requestedUri,
-        headers: newHeaders,
-        body: request.read(),
-        context: request.context,
-      );
+      final shelf.Request modifiedRequest = request.change(headers: newHeaders);
 
       // print('--- Request Headers After Middleware Injection ---');
       // newHeaders.forEach((key, value) {

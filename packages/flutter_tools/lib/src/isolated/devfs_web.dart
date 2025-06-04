@@ -265,24 +265,26 @@ class WebAssetServer implements AssetReader {
     // TODO(srujzs): Remove this assertion when the library bundle format is
     // supported without canary mode.
 
-    final String effectiveHost = devConfig.host;
-    final int effectivePort = devConfig.port;
+    final String effectiveHost = devConfig.host ?? 'localhost';
+    final int effectivePort = devConfig.port ?? 0;
     final String? effectiveCertPath = devConfig.https?.certPath;
     final String? effectiveCertKeyPath = devConfig.https?.certKeyPath;
     final List<String> effectiveHeaders = devConfig.headers;
-    final List<ProxyConfig> effectiveProxy = devConfig.proxy ?? <ProxyConfig>[];
+    final Map<String, ProxyConfig> effectiveProxy = devConfig.proxy ?? <String, ProxyConfig>{};
+
+    HttpServer? httpServer;
+    const int kMaxRetries = 4;
 
     if (ddcModuleSystem) {
       assert(canaryFeatures);
     }
     InternetAddress address;
-    if (effectiveHost == 'any') {
+    if (effectiveHost == 'localhost') {
       address = InternetAddress.anyIPv4;
     } else {
       address = (await InternetAddress.lookup(effectiveHost)).first;
     }
-    HttpServer? httpServer;
-    const int kMaxRetries = 4;
+
     for (int i = 0; i <= kMaxRetries; i++) {
       try {
         if (effectiveCertPath != null && effectiveCertKeyPath != null) {
@@ -327,7 +329,7 @@ class WebAssetServer implements AssetReader {
     );
     final int selectedPort = httpServer.port;
     String url = '$effectiveHost:$selectedPort';
-    if (devConfig.host == 'any') {
+    if (effectiveHost == 'localhost') {
       url = 'localhost:$selectedPort';
     }
     server._baseUri = Uri.http(url, server.basePath);
@@ -447,7 +449,7 @@ class WebAssetServer implements AssetReader {
           expressionCompiler: expressionCompiler,
           spawnDds: enableDds,
         ),
-        appMetadata: AppMetadata(hostname: devConfig.host),
+        appMetadata: AppMetadata(hostname: effectiveHost),
       ),
       // Inject the debugging support code if connected web devices are present,
       // and user specified a device id that matches a connected web device.
@@ -514,40 +516,37 @@ class WebAssetServer implements AssetReader {
     final shelf_router.Router router = shelf_router.Router();
 
     // Helper function to handle the proxy request
-    Future<shelf.Response> handleProxyRequest(
-      shelf.Request request,
-      ProxyConfig proxyConfig,
-    ) async {
-      return await proxyHandler(proxyConfig.target)(request);
+    Future<shelf.Response> handleProxyRequest(shelf.Request request, String targetUrl) async {
+      return await proxyHandler(targetUrl)(request);
     }
 
-    // effectiveProxy.forEach((String path, ProxyConfig proxyConfig) {
-    //   // Exact match (e.g., /api or api)
-    //   router.all(path, (shelf.Request request) async {
-    //     return handleProxyRequest(request, proxyConfig.target);
-    //   });
+    effectiveProxy.forEach((String path, ProxyConfig proxyConfig) {
+      // Exact match (e.g., /api or api)
+      router.all(path, (shelf.Request request) async {
+        return handleProxyRequest(request, proxyConfig.target);
+      });
 
-    //   // Remainder
-    //   router.all('$path/<remainder|.*>', (shelf.Request request) async {
-    //     return handleProxyRequest(request, proxyConfig.target);
-    //   });
-    // });
-
-    // router.all('/<unmatched|.*>', server.handleRequest);
-
-    router.all('/<path|.*>', (shelf.Request request) async {
-      final String requestPath = '/${request.params['path'] ?? ''}';
-
-      for (final config in effectiveProxy) {
-        if (config.matches(requestPath)) {
-          print('Proxying $requestPath to ${config.target} using ${config.runtimeType}');
-          return handleProxyRequest(request, config);
-        }
-      }
-
-      print('No proxy match for $requestPath, handling with default server');
-      return server.handleRequest(request);
+      // Remainder
+      router.all('$path/<remainder|.*>', (shelf.Request request) async {
+        return handleProxyRequest(request, proxyConfig.target);
+      });
     });
+
+    router.all('/<unmatched|.*>', server.handleRequest);
+
+    // router.all('/<path|.*>', (shelf.Request request) async {
+    //   final String requestPath = '/${request.params['path'] ?? ''}';
+
+    //   for (final config in effectiveProxy) {
+    //     if (config.matches(requestPath)) {
+    //       print('Proxying $requestPath to ${config.target} using ${config.runtimeType}');
+    //       return handleProxyRequest(request, config);
+    //     }
+    //   }
+
+    //   print('No proxy match for $requestPath, handling with default server');
+    //   return server.handleRequest(request);
+    // });
 
     final shelf.Handler routerHandler = pipeline.addHandler(router.call);
     final shelf.Cascade cascade = shelf.Cascade()
