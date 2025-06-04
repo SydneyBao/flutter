@@ -92,7 +92,6 @@ class DevConfig {
 class HttpsConfig {
   /// Create a new [HttpsConfig] object.
   const HttpsConfig({required this.certPath, required this.certKeyPath});
-
   /// Create a [HttpsConfig] from a `https` YAML map.
   factory HttpsConfig.fromYaml(YamlMap yaml) {
     if (yaml['cert-path'] is! String && yaml['cert-path'] != null) {
@@ -242,6 +241,7 @@ Future<DevConfig> loadDevConfig() async {
       globals.printStatus('No proxy rules found.');
     }
     return config;
+
   } on YamlException catch (e) {
     String errorMessage = 'Error: Failed to parse $devConfigFilePath: ${e.message}';
     if (e.span != null) {
@@ -272,7 +272,6 @@ shelf.Middleware injectHeadersMiddleware(List<String> headersToInject) {
           globals.printError('Error in header: "$headerEntry"');
         }
       }
-
       final shelf.Request modifiedRequest = request.change(headers: newHeaders);
 
       // print('--- Request Headers After Middleware Injection ---');
