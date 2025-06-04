@@ -3,11 +3,11 @@ import 'dart:io' as io;
 
 import 'package:meta/meta.dart';
 import 'package:shelf/shelf.dart' as shelf;
+import 'package:source_span/source_span.dart';
 import 'package:yaml/yaml.dart';
 
 import '../base/common.dart';
 import '../globals.dart' as globals;
-import 'package:source_span/source_span.dart';
 
 /// Class that represents the web server configuration specified in a `devconfig.yaml` file.
 @immutable
@@ -92,6 +92,7 @@ class DevConfig {
 class HttpsConfig {
   /// Create a new [HttpsConfig] object.
   const HttpsConfig({required this.certPath, required this.certKeyPath});
+
   /// Create a [HttpsConfig] from a `https` YAML map.
   factory HttpsConfig.fromYaml(YamlMap yaml) {
     if (yaml['cert-path'] is! String && yaml['cert-path'] != null) {
@@ -193,33 +194,22 @@ Future<DevConfig> loadDevConfig() async {
   try {
     final String devConfigContent = await devConfigFile.readAsString();
     final YamlDocument yamlDoc = loadYamlDocument(devConfigContent);
-    if (yamlDoc.contents is! YamlMap) {
-      final SourceSpan span;
-      if (yamlDoc.contents?.span != null) {
-        span = yamlDoc.contents!.span;
-      } else {
-        final SourceFile sourceFile = SourceFile.fromString(
-          devConfigContent,
-          url: Uri.file(devConfigFilePath),
-        );
-        span = sourceFile.span(0, devConfigContent.length);
-      }
-
+    final YamlNode contents = yamlDoc.contents;
+    if (contents is! YamlMap) {
       throw YamlException(
         'The root of $devConfigFilePath must be a YAML map (e.g., "server:"). '
-        'Found a ${yamlDoc.contents.runtimeType} instead.',
-        span,
+        'Found a ${contents.runtimeType} instead.',
+        contents.span,
       );
     }
-    final YamlMap rootYaml = yamlDoc.contents as YamlMap;
 
-    if (!rootYaml.containsKey('server') || rootYaml['server'] is! YamlMap) {
+    if (!contents.containsKey('server') || contents['server'] is! YamlMap) {
       // Find the span for the 'server' key if it exists but is malformed,
       // otherwise use the root span.
       final SourceSpan span =
-          (rootYaml.containsKey('server') && rootYaml['server'] is YamlNode)
-              ? (rootYaml['server'] as YamlNode).span
-              : rootYaml.span;
+          (contents.containsKey('server') && contents['server'] is YamlNode)
+              ? (contents['server'] as YamlNode).span
+              : contents.span;
 
       throw YamlException(
         'The "$devConfigFilePath" file is found, but the "server" key is '
@@ -228,7 +218,7 @@ Future<DevConfig> loadDevConfig() async {
       );
     }
 
-    final YamlMap serverYaml = rootYaml['server'] as YamlMap;
+    final YamlMap serverYaml = contents['server'] as YamlMap;
     final DevConfig config = DevConfig.fromYaml(serverYaml);
     globals.printStatus('\nParsed devconfig.yaml:');
     globals.printStatus(config.toString());
@@ -241,7 +231,6 @@ Future<DevConfig> loadDevConfig() async {
       globals.printStatus('No proxy rules found.');
     }
     return config;
-
   } on YamlException catch (e) {
     String errorMessage = 'Error: Failed to parse $devConfigFilePath: ${e.message}';
     if (e.span != null) {
@@ -249,7 +238,7 @@ Future<DevConfig> loadDevConfig() async {
       errorMessage += '\n  Problematic text: "${e.span!.text}"';
     }
     globals.printError(errorMessage);
-    throw e;
+    rethrow;
   } on Exception catch (e) {
     globals.printError('An unexpected error occurred while reading devconfig.yaml: $e');
     globals.printStatus(

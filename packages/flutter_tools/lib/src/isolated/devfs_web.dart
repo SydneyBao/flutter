@@ -270,7 +270,7 @@ class WebAssetServer implements AssetReader {
     final String? effectiveCertPath = devConfig.https?.certPath;
     final String? effectiveCertKeyPath = devConfig.https?.certKeyPath;
     final List<String> effectiveHeaders = devConfig.headers;
-    final Map<String, ProxyConfig> effectiveProxy = devConfig.proxy ?? <String, ProxyConfig>{};
+    final Map<String, ProxyConfig> effectiveProxy = devConfig.proxy;
 
     HttpServer? httpServer;
     const int kMaxRetries = 4;
