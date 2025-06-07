@@ -14,7 +14,6 @@ import 'package:package_config/package_config.dart';
 import 'package:shelf/shelf.dart' as shelf;
 import 'package:shelf/shelf_io.dart' as shelf;
 import 'package:shelf_proxy/shelf_proxy.dart';
-import 'package:shelf_router/shelf_router.dart' as shelf_router;
 import 'package:vm_service/vm_service.dart' as vm_service;
 
 import '../artifacts.dart';
@@ -270,7 +269,7 @@ class WebAssetServer implements AssetReader {
     final String? effectiveCertPath = devConfig.https?.certPath;
     final String? effectiveCertKeyPath = devConfig.https?.certKeyPath;
     final List<String> effectiveHeaders = devConfig.headers;
-    final Map<String, ProxyConfig> effectiveProxy = devConfig.proxy;
+    final List<ProxyConfig> effectiveProxy = devConfig.proxy;
 
     HttpServer? httpServer;
     const int kMaxRetries = 4;
@@ -466,93 +465,9 @@ class WebAssetServer implements AssetReader {
       pipeline = pipeline.addMiddleware(middleware);
       pipeline = pipeline.addMiddleware(dwds.middleware);
     }
-
+    pipeline = pipeline.addMiddleware(proxyMiddleware(effectiveProxy));
     final shelf.Handler dwdsHandler = pipeline.addHandler(server.handleRequest);
-
-    //REWRITE LOGIC
-    // final shelf_router.Router router = shelf_router.Router();
-
-    // effectiveProxy.forEach((path, proxyConfig) {
-    //   print("PATH: $path, PROXYCONFIG: $proxyConfig");
-    //   //exact match (e.g. /api or api)
-    //   router.all(path, (shelf.Request request) async {
-    //     print("MATCHED exact proxy rule for request: ${request.url.path}");
-    //     final Uri targetResolvedUri = Uri.parse(proxyConfig.target).resolve('/');
-
-    //     final shelf.Request newRequest = shelf.Request(
-    //       request.method,
-    //       targetResolvedUri,
-    //       headers: request.headers,
-    //       body: await request.read().toList(),
-    //       context: request.context,
-    //     );
-    //     return await proxyHandler(proxyConfig.target)(newRequest);
-    //   });
-
-    //   //remainder
-    //   router.all('$path/<remainder|.*>', (shelf.Request request) async {
-    //     print(
-    //       "MATCHED proxy rule for request: ${request.url.path} (pattern: '$path/<remainder|.*>')",
-    //     );
-
-    //     final String? remainder = request.params['remainder'];
-    //     final Uri targetResolvedUri = Uri.parse(proxyConfig.target).resolve('/$remainder');
-    //     final shelf.Request newRequest = shelf.Request(
-    //       request.method,
-    //       targetResolvedUri,
-    //       headers: request.headers,
-    //       body: await request.read().toList(),
-    //       context: request.context,
-    //     );
-
-    //     try {
-    //       return await proxyHandler(proxyConfig.target)(newRequest);
-    //     } catch (e, s) {
-    //       print('ERROR in proxy handler for ${request.url.path}: $e\n$s');
-    //       return shelf.Response.internalServerError(body: 'Proxy error: $e');
-    //     }
-    //   });
-    // });
-    final shelf_router.Router router = shelf_router.Router();
-
-    // Helper function to handle the proxy request
-    Future<shelf.Response> handleProxyRequest(shelf.Request request, String targetUrl) async {
-      return await proxyHandler(targetUrl)(request);
-    }
-
-    effectiveProxy.forEach((String path, ProxyConfig proxyConfig) {
-      // Exact match (e.g., /api or api)
-      router.all(path, (shelf.Request request) async {
-        return handleProxyRequest(request, proxyConfig.target);
-      });
-
-      // Remainder
-      router.all('$path/<remainder|.*>', (shelf.Request request) async {
-        return handleProxyRequest(request, proxyConfig.target);
-      });
-    });
-
-    router.all('/<unmatched|.*>', server.handleRequest);
-
-    // router.all('/<path|.*>', (shelf.Request request) async {
-    //   final String requestPath = '/${request.params['path'] ?? ''}';
-
-    //   for (final config in effectiveProxy) {
-    //     if (config.matches(requestPath)) {
-    //       print('Proxying $requestPath to ${config.target} using ${config.runtimeType}');
-    //       return handleProxyRequest(request, config);
-    //     }
-    //   }
-
-    //   print('No proxy match for $requestPath, handling with default server');
-    //   return server.handleRequest(request);
-    // });
-
-    final shelf.Handler routerHandler = pipeline.addHandler(router.call);
-    final shelf.Cascade cascade = shelf.Cascade()
-        .add(dwds.handler)
-        .add(routerHandler)
-        .add(dwdsHandler);
+    final shelf.Cascade cascade = shelf.Cascade().add(dwds.handler).add(dwdsHandler);
     runZonedGuarded(
       () {
         shelf.serveRequests(httpServer!, cascade.handler);
@@ -1490,4 +1405,33 @@ WebTemplate _getWebTemplate(String filename, String fallbackContent) {
 String _htmlTemplate(String filename, String fallbackContent) {
   final File template = globals.fs.currentDirectory.childDirectory('web').childFile(filename);
   return template.existsSync() ? template.readAsStringSync() : fallbackContent;
+}
+
+shelf.Middleware proxyMiddleware(List<ProxyConfig> effectiveProxy) {
+  return (shelf.Handler innerHandler) {
+    return (shelf.Request request) async {
+      final String requestPath = '/${request.url.path}'.replaceAll('//', '/');
+      for (final ProxyConfig config in effectiveProxy) {
+        if (config.matches(requestPath)) {
+          final Uri targetBaseUri = Uri.parse(config.target);
+          final String rewrittenRequest = config.getRewrittenPath(requestPath);
+          final Uri finalTargetUrl = targetBaseUri.resolve(rewrittenRequest);
+          try {
+            final shelf.Request proxyBackendRequest = shelf.Request(
+              request.method,
+              finalTargetUrl,
+              headers: request.headers,
+              body: request.read(),
+              context: request.context,
+            );
+            return await proxyHandler(targetBaseUri)(proxyBackendRequest);
+          } on Exception catch (e) {
+            globals.printStatus('Proxy error for $finalTargetUrl: $e. Allowing fall-through.');
+            return innerHandler(request);
+          }
+        }
+      }
+      return innerHandler(request);
+    };
+  };
 }
