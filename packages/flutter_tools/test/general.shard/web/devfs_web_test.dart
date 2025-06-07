@@ -17,6 +17,7 @@ import 'package:flutter_tools/src/compile.dart';
 import 'package:flutter_tools/src/convert.dart';
 import 'package:flutter_tools/src/devfs.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
+import 'package:flutter_tools/src/isolated/devfs_config.dart';
 import 'package:flutter_tools/src/isolated/devfs_web.dart';
 import 'package:flutter_tools/src/web/compile.dart';
 import 'package:flutter_tools/src/web_template.dart';
@@ -900,11 +901,8 @@ void main() {
       final ResidentCompiler residentCompiler =
           FakeResidentCompiler()..output = const CompilerOutput('a', 0, <Uri>[]);
 
+      const DevConfig devConfig = DevConfig();
       final WebDevFS webDevFS = WebDevFS(
-        hostname: 'localhost',
-        port: 0,
-        tlsCertPath: null,
-        tlsCertKeyPath: null,
         packagesFilePath: '.dart_tool/package_config.json',
         urlTunneller: null,
         useSseForDebugProxy: true,
@@ -931,6 +929,7 @@ void main() {
         useLocalCanvasKit: false,
         rootDirectory: globals.fs.currentDirectory,
         isWindows: false,
+        devConfig: devConfig,
       );
       webDevFS.requireJS.createSync(recursive: true);
       webDevFS.flutterJs.createSync(recursive: true);
@@ -1008,11 +1007,8 @@ void main() {
       final ResidentCompiler residentCompiler =
           FakeResidentCompiler()..output = const CompilerOutput('a', 0, <Uri>[]);
 
+      const DevConfig devConfig = DevConfig();
       final WebDevFS webDevFS = WebDevFS(
-        hostname: 'localhost',
-        port: 0,
-        tlsCertPath: null,
-        tlsCertKeyPath: null,
         packagesFilePath: '.dart_tool/package_config.json',
         urlTunneller: null,
         useSseForDebugProxy: true,
@@ -1039,6 +1035,7 @@ void main() {
         useLocalCanvasKit: false,
         rootDirectory: globals.fs.currentDirectory,
         isWindows: false,
+        devConfig: devConfig,
       );
       webDevFS.requireJS.createSync(recursive: true);
       webDevFS.flutterJs.createSync(recursive: true);
@@ -1120,13 +1117,9 @@ void main() {
         outputFile.parent.childFile('a.json').writeAsStringSync('{}');
         outputFile.parent.childFile('a.map').writeAsStringSync('{}');
         outputFile.parent.childFile('a.metadata').writeAsStringSync('{}');
-
+        const DevConfig devConfig = DevConfig();
         final WebDevFS webDevFS = WebDevFS(
           // if this is any other value, we will do a real ip lookup
-          hostname: 'any',
-          port: 0,
-          tlsCertPath: null,
-          tlsCertKeyPath: null,
           packagesFilePath: '.dart_tool/package_config.json',
           urlTunneller: null,
           useSseForDebugProxy: true,
@@ -1153,6 +1146,7 @@ void main() {
           useLocalCanvasKit: false,
           rootDirectory: globals.fs.currentDirectory,
           isWindows: false,
+          devConfig: devConfig,
         );
         webDevFS.requireJS.createSync(recursive: true);
         webDevFS.stackTraceMapper.createSync(recursive: true);
@@ -1203,12 +1197,8 @@ void main() {
       outputFile.parent.childFile('a.sources').writeAsStringSync('');
       outputFile.parent.childFile('a.json').writeAsStringSync('{}');
       outputFile.parent.childFile('a.map').writeAsStringSync('{}');
-
+      const DevConfig devConfig = DevConfig(host: 'any');
       final WebDevFS webDevFS = WebDevFS(
-        hostname: 'any',
-        port: 0,
-        tlsCertPath: null,
-        tlsCertKeyPath: null,
         packagesFilePath: '.dart_tool/package_config.json',
         urlTunneller: null,
         useSseForDebugProxy: true,
@@ -1230,6 +1220,7 @@ void main() {
         useLocalCanvasKit: false,
         rootDirectory: globals.fs.currentDirectory,
         isWindows: false,
+        devConfig: devConfig,
       );
       webDevFS.requireJS.createSync(recursive: true);
       webDevFS.stackTraceMapper.createSync(recursive: true);
@@ -1249,12 +1240,8 @@ void main() {
       outputFile.parent.childFile('a.sources').writeAsStringSync('');
       outputFile.parent.childFile('a.json').writeAsStringSync('{}');
       outputFile.parent.childFile('a.map').writeAsStringSync('{}');
-
+      const DevConfig devConfig = DevConfig();
       final WebDevFS webDevFS = WebDevFS(
-        hostname: 'localhost',
-        port: 0,
-        tlsCertPath: null,
-        tlsCertKeyPath: null,
         packagesFilePath: '.dart_tool/package_config.json',
         urlTunneller: null,
         useSseForDebugProxy: true,
@@ -1282,6 +1269,7 @@ void main() {
         useLocalCanvasKit: false,
         rootDirectory: globals.fs.currentDirectory,
         isWindows: false,
+        devConfig: devConfig,
       );
       webDevFS.requireJS.createSync(recursive: true);
       webDevFS.stackTraceMapper.createSync(recursive: true);
@@ -1308,12 +1296,13 @@ void main() {
 
       final String dummyCertPath = globals.fs.path.join(dataPath, 'tls_cert', 'dummy-cert.pem');
       final String dummyCertKeyPath = globals.fs.path.join(dataPath, 'tls_cert', 'dummy-key.pem');
-
+      final DevConfig devConfig = DevConfig(
+        https: HttpsConfig(
+          certPath: dummyCertPath,
+          certKeyPath: dummyCertKeyPath,
+        ),
+      );
       final WebDevFS webDevFS = WebDevFS(
-        hostname: 'localhost',
-        port: 0,
-        tlsCertPath: dummyCertPath,
-        tlsCertKeyPath: dummyCertKeyPath,
         packagesFilePath: '.dart_tool/package_config.json',
         urlTunneller: null,
         useSseForDebugProxy: true,
@@ -1335,6 +1324,7 @@ void main() {
         useLocalCanvasKit: false,
         rootDirectory: globals.fs.currentDirectory,
         isWindows: false,
+        devConfig: devConfig,
       );
       webDevFS.requireJS.createSync(recursive: true);
       webDevFS.stackTraceMapper.createSync(recursive: true);
@@ -1349,11 +1339,9 @@ void main() {
   );
 
   test('allows frame embedding', () async {
+    const DevConfig devConfig = DevConfig();
+
     final WebAssetServer webAssetServer = await WebAssetServer.start(
-      null,
-      'localhost',
-      0,
-      null,
       null,
       null,
       true,
@@ -1374,6 +1362,7 @@ void main() {
       isWasm: false,
       useLocalCanvasKit: false,
       testMode: true,
+      devConfig: devConfig,
     );
 
     expect(webAssetServer.defaultResponseHeaders['x-frame-options'], null);
@@ -1383,11 +1372,12 @@ void main() {
   test('passes on extra headers', () async {
     const String extraHeaderKey = 'hurray';
     const String extraHeaderValue = 'flutter';
+
+    const DevConfig devConfig = DevConfig(
+      headers: <String>['$extraHeaderKey=$extraHeaderValue'],
+    );
+
     final WebAssetServer webAssetServer = await WebAssetServer.start(
-      null,
-      'localhost',
-      0,
-      null,
       null,
       null,
       true,
@@ -1408,6 +1398,7 @@ void main() {
       isWasm: false,
       useLocalCanvasKit: false,
       testMode: true,
+      devConfig: devConfig,
     );
 
     expect(webAssetServer.defaultResponseHeaders[extraHeaderKey], <String>[extraHeaderValue]);
@@ -1478,12 +1469,8 @@ void main() {
       outputFile.parent.childFile('a.json').writeAsStringSync('{}');
       outputFile.parent.childFile('a.map').writeAsStringSync('{}');
       outputFile.parent.childFile('a.metadata').writeAsStringSync('{}');
-
+      const DevConfig devConfig = DevConfig();
       final WebDevFS webDevFS = WebDevFS(
-        hostname: 'localhost',
-        port: 0,
-        tlsCertPath: null,
-        tlsCertKeyPath: null,
         packagesFilePath: '.dart_tool/package_config.json',
         urlTunneller: null,
         useSseForDebugProxy: true,
@@ -1505,6 +1492,7 @@ void main() {
         useLocalCanvasKit: false,
         rootDirectory: globals.fs.currentDirectory,
         isWindows: false,
+        devConfig: devConfig,
       );
       webDevFS.requireJS.createSync(recursive: true);
       webDevFS.stackTraceMapper.createSync(recursive: true);

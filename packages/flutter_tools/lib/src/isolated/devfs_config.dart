@@ -37,10 +37,9 @@ class DevConfig {
     if (serverYaml['browser'] is! YamlMap && serverYaml['browser'] != null) {
       throwToolExit('Browser must be a Map. Found ${serverYaml['browser'].runtimeType}');
     }
-    if (serverYaml['experimental-hot-reload'] is! bool &&
-        serverYaml['experimental-hot-reload'] != null) {
+    if (yaml['experimental-hot-reload'] is! bool && yaml['experimental-hot-reload'] != null) {
       throwToolExit(
-        'experimental-hot-reload must be a bool. Found ${serverYaml['experimental-hot-reload'].runtimeType}',
+        'experimental-hot-reload must be a bool. Found ${yaml['experimental-hot-reload'].runtimeType}',
       );
     }
 
@@ -58,19 +57,18 @@ class DevConfig {
     }
 
     return DevConfig(
-      headers: headers,
-      host: serverYaml['host'] as String?,
-      port: serverYaml['port'] as int?,
-      https:
-          serverYaml['https'] is YamlMap
-              ? HttpsConfig.fromYaml(serverYaml['https'] as YamlMap)
-              : null,
-      browser:
-          serverYaml['browser'] is YamlMap
-              ? BrowserConfig.fromYaml(serverYaml['browser'] as YamlMap)
-              : null,
-      experimentalHotReload: serverYaml['experimental-hot-reload'] as bool? ?? false,
-      proxy: proxyRules,
+      headers: (yaml['headers'] as YamlList?)?.cast<String>() ?? const <String>[],
+      host: yaml['host'] as String?,
+      port: yaml['port'] as int?,
+      https: yaml['https'] == null ? null : HttpsConfig.fromYaml(yaml['https'] as YamlMap),
+      browser: yaml['browser'] == null ? null : BrowserConfig.fromYaml(yaml['browser'] as YamlMap),
+      experimentalHotReload: yaml['experimental-hot-reload'] as bool?,
+      proxy: <String, ProxyConfig>{
+        for (final MapEntry<dynamic, dynamic> entry
+            in (yaml['proxy'] as YamlMap? ?? <dynamic, dynamic>{}).entries)
+          if (entry.key is String && entry.value is YamlMap)
+            entry.key as String: ProxyConfig.fromYaml(entry.value as YamlMap),
+      },
     );
   }
 
@@ -98,7 +96,10 @@ class DevConfig {
 
 @immutable
 class HttpsConfig {
+  /// Create a new [HttpsConfig] object.
   const HttpsConfig({required this.certPath, required this.certKeyPath});
+
+  /// Create a [HttpsConfig] from a `https` YAML map.
   factory HttpsConfig.fromYaml(YamlMap yaml) {
     if (yaml['cert-path'] is! String && yaml['cert-path'] != null) {
       throwToolExit('Https cert-path must be a String. Found ${yaml['cert-path'].runtimeType}');
@@ -227,6 +228,8 @@ class RegexProxyConfig extends ProxyConfig {
 
 @immutable
 class BrowserConfig {
+  
+  /// Create a new [BrowserConfig] object.
   const BrowserConfig({required this.path, required this.args});
 
   factory BrowserConfig.fromYaml(YamlMap yaml) {
@@ -272,34 +275,22 @@ Future<DevConfig> loadDevConfig() async {
   try {
     final String devConfigContent = await devConfigFile.readAsString();
     final YamlDocument yamlDoc = loadYamlDocument(devConfigContent);
-    final YamlNode? contents = yamlDoc.contents;
-
+    final YamlNode contents = yamlDoc.contents;
     if (contents is! YamlMap) {
-      final SourceSpan span;
-      if (contents != null) {
-        span = contents.span;
-      } else {
-        final SourceFile sourceFile = SourceFile.fromString(
-          devConfigContent,
-          url: Uri.file(devConfigFilePath),
-        );
-        span = sourceFile.span(0, devConfigContent.length);
-      }
-
       throw YamlException(
         'The root of $devConfigFilePath must be a YAML map (e.g., "server:"). '
-        'Found a ${yamlDoc.contents.runtimeType} instead.',
-        span,
+        'Found a ${contents.runtimeType} instead.',
+        contents.span,
       );
     }
-    final YamlMap rootYaml = yamlDoc.contents as YamlMap;
 
-    if (!rootYaml.containsKey('server') || rootYaml['server'] is! YamlMap) {
+    if (!contents.containsKey('server') || contents['server'] is! YamlMap) {
+      // Find the span for the 'server' key if it exists but is malformed,
+      // otherwise use the root span.
       final SourceSpan span =
-          (rootYaml.containsKey('server') && rootYaml['server'] is YamlNode)
-              ? (rootYaml['server'] as YamlNode).span
-              : rootYaml.span;
-
+          (contents.containsKey('server') && contents['server'] is YamlNode)
+              ? (contents['server'] as YamlNode).span
+              : contents.span;
       throw YamlException(
         'The "$devConfigFilePath" file is found, but the "server" key is '
         'missing or malformed. It must be a YAML map.',
@@ -307,7 +298,7 @@ Future<DevConfig> loadDevConfig() async {
       );
     }
 
-    final YamlMap serverYaml = rootYaml['server'] as YamlMap;
+    final YamlMap serverYaml = contents['server'] as YamlMap;
     final DevConfig config = DevConfig.fromYaml(serverYaml);
     globals.printStatus('\nParsed devconfig.yaml:');
     globals.printStatus(config.toString());
@@ -337,22 +328,39 @@ Future<DevConfig> loadDevConfig() async {
   }
 }
 
-shelf.Middleware injectHeadersMiddleware(List<String> headersToInject) {
+shelf.Middleware manageHeadersMiddleware({
+  List<String> headersToInjectOnRequest = const <String>[],
+  List<String> headersToRemoveFromRequest = const <String>[],
+  Map<String, String> headersToSetOnResponse = const <String, String>{},
+  List<String> headersToRemoveFromResponse = const <String>[],
+}) {
   return (shelf.Handler innerHandler) {
     return (shelf.Request request) async {
-      final Map<String, String> newHeaders = <String, String>{...request.headers};
-
-      for (final String headerEntry in headersToInject) {
+      final Map<String, String> newRequestHeaders = Map<String, String>.of(request.headers);
+      for (final String headerEntry in headersToInjectOnRequest) {
         final List<String> parts = headerEntry.split('=');
         if (parts.length == 2) {
-          newHeaders[parts[0].toLowerCase()] = parts[1];
+          newRequestHeaders[parts[0].trim().toLowerCase()] = parts[1].trim();
         } else {
-          globals.printError('Error in header: "$headerEntry"');
+          globals.printError('Error in request header to inject: "$headerEntry"');
         }
       }
-      final shelf.Request modifiedRequest = request.change(headers: newHeaders);
+      for (final String headerNameToRemove in headersToRemoveFromRequest) {
+        newRequestHeaders.remove(headerNameToRemove.toLowerCase());
+      }
+      final shelf.Request modifiedRequest = request.change(headers: newRequestHeaders);
 
-      return await innerHandler(modifiedRequest);
+      final shelf.Response response = await innerHandler(modifiedRequest);
+      final Map<String, String> newResponseHeaders = Map<String, String>.of(response.headers);
+
+      for (final String headerName in headersToRemoveFromResponse) {
+        newResponseHeaders.remove(headerName.toLowerCase());
+      }
+
+      headersToSetOnResponse.forEach((String key, String value) {
+        newResponseHeaders[key.toLowerCase()] = value;
+      });
+      return response.change(headers: newResponseHeaders);
     };
   };
 }
