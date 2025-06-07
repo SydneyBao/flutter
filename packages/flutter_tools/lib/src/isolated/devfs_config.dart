@@ -43,9 +43,6 @@ class DevConfig {
       );
     }
 
-    final List<String> headers =
-        (yaml['headers'] as YamlList?)?.map((dynamic e) => e.toString()).toList() ?? <String>[];
-
     final List<ProxyConfig> proxyRules = <ProxyConfig>[];
     if (yaml['proxy'] is YamlMap) {
       (yaml['proxy'] as YamlMap).forEach((dynamic key, dynamic value) {
