@@ -120,7 +120,7 @@ class HttpsConfig {
 
 abstract class ProxyConfig {
   ProxyConfig({required this.target, this.rewrite});
-
+  
   factory ProxyConfig.fromYaml(String key, YamlMap yaml) {
     String Function(String)? rewriteFn;
     if (yaml['rewrite'] is bool && yaml['rewrite'] == true) {
@@ -219,6 +219,7 @@ class RegexProxyConfig extends ProxyConfig {
 
 @immutable
 class BrowserConfig {
+  
   /// Create a new [BrowserConfig] object.
   const BrowserConfig({required this.path, required this.args});
 
