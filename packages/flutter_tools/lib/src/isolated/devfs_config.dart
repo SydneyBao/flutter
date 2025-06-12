@@ -8,6 +8,7 @@ import 'package:yaml/yaml.dart';
 
 import '../base/common.dart';
 import '../globals.dart' as globals;
+import 'devfs_proxy.dart';
 
 @immutable
 class DevConfig {
@@ -47,7 +48,15 @@ class DevConfig {
     if (yaml['proxy'] is YamlMap) {
       (yaml['proxy'] as YamlMap).forEach((dynamic key, dynamic value) {
         if (value is YamlMap) {
-          proxyRules.add(ProxyConfig.fromYaml(key.toString(), value));
+          final String keyString = key.toString();
+          if (!keyString.endsWith('/')) {
+            globals.logger.printError(
+              "Proxy key '$keyString' does not end with '/'. Ignoring this proxy rule.",
+            );
+
+            return;
+          }
+          proxyRules.add(ProxyConfig.fromYaml(keyString, value));
         }
       });
     }
@@ -112,114 +121,14 @@ class HttpsConfig {
   @override
   String toString() {
     return '''
-    HttpsConfig:
+    HttpsConfig:x
     certPath: $certPath
     certKeyPath: $certKeyPath''';
   }
 }
 
-abstract class ProxyConfig {
-  ProxyConfig({required this.target, this.rewrite});
-  
-  factory ProxyConfig.fromYaml(String key, YamlMap yaml) {
-    String Function(String)? rewriteFn;
-    if (yaml['rewrite'] is bool && yaml['rewrite'] == true) {
-      rewriteFn = (String path) => path.replaceFirst(key, '');
-    } else {
-      final String? rewriteValue = yaml['rewrite']?.toString();
-      if (rewriteValue != null && rewriteValue.isNotEmpty) {
-        final List<String> parts = rewriteValue.split('->');
-        if (parts.length == 2) {
-          final RegExp pattern = RegExp(parts[0].trim());
-          final String replacementTemplate = parts[1].trim();
-
-          rewriteFn = (String path) {
-            final RegExpMatch? match = pattern.firstMatch(path);
-            if (match != null) {
-              String result = replacementTemplate;
-              for (int i = 0; i <= match.groupCount; i++) {
-                result = result.replaceAll('\$$i', match.group(i) ?? '');
-              }
-              return result;
-            }
-            return path;
-          };
-        }
-      }
-    }
-
-    if (key.startsWith('^')) {
-      try {
-        return RegexProxyConfig(
-          pattern: RegExp(key),
-          target: yaml['target'] as String,
-          rewrite: rewriteFn,
-        );
-      } on FormatException catch (e) {
-        globals.printStatus('Warning: Invalid regex pattern "$key". Treating as string prefix: $e');
-        return StringPrefixProxyConfig(
-          prefix: key,
-          target: yaml['target'] as String,
-          rewrite: rewriteFn,
-        );
-      }
-    } else {
-      return StringPrefixProxyConfig(
-        prefix: key,
-        target: yaml['target'] as String,
-        rewrite: rewriteFn,
-      );
-    }
-  }
-
-  final String target;
-  final String Function(String)? rewrite;
-
-  bool matches(String path);
-
-  String getRewrittenPath(String path) {
-    if (rewrite != null) {
-      return rewrite!(path);
-    }
-    return path;
-  }
-}
-
-class StringPrefixProxyConfig extends ProxyConfig {
-  StringPrefixProxyConfig({required this.prefix, required super.target, super.rewrite});
-
-  final String prefix;
-
-  @override
-  bool matches(String path) {
-    return path.startsWith(prefix);
-  }
-
-  @override
-  String toString() {
-    return '{prefix: $prefix, target: $target, rewrite: ${rewrite != null ? 'yes' : 'no'}}';
-  }
-}
-
-class RegexProxyConfig extends ProxyConfig {
-  RegexProxyConfig({required this.pattern, required super.target, super.rewrite});
-
-  final RegExp pattern;
-
-  @override
-  bool matches(String path) {
-    return pattern.hasMatch(path);
-  }
-
-  @override
-  String toString() {
-    return '{pattern: ${pattern.pattern}, target: $target, rewrite: ${rewrite != null ? 'yes' : 'no'}}';
-  }
-}
-
 @immutable
 class BrowserConfig {
-  
   /// Create a new [BrowserConfig] object.
   const BrowserConfig({required this.path, required this.args});
 

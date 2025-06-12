@@ -13,7 +13,6 @@ import 'package:mime/mime.dart' as mime;
 import 'package:package_config/package_config.dart';
 import 'package:shelf/shelf.dart' as shelf;
 import 'package:shelf/shelf_io.dart' as shelf;
-import 'package:shelf_proxy/shelf_proxy.dart';
 import 'package:vm_service/vm_service.dart' as vm_service;
 
 import '../artifacts.dart';
@@ -44,6 +43,7 @@ import '../web/module_metadata.dart';
 import '../web/web_constants.dart';
 import '../web_template.dart';
 import 'devfs_config.dart';
+import 'devfs_proxy.dart';
 
 typedef DwdsLauncher =
     Future<Dwds> Function({
@@ -1411,33 +1411,4 @@ WebTemplate _getWebTemplate(String filename, String fallbackContent) {
 String _htmlTemplate(String filename, String fallbackContent) {
   final File template = globals.fs.currentDirectory.childDirectory('web').childFile(filename);
   return template.existsSync() ? template.readAsStringSync() : fallbackContent;
-}
-
-shelf.Middleware proxyMiddleware(List<ProxyConfig> effectiveProxy) {
-  return (shelf.Handler innerHandler) {
-    return (shelf.Request request) async {
-      final String requestPath = '/${request.url.path}'.replaceAll('//', '/');
-      for (final ProxyConfig config in effectiveProxy) {
-        if (config.matches(requestPath)) {
-          final Uri targetBaseUri = Uri.parse(config.target);
-          final String rewrittenRequest = config.getRewrittenPath(requestPath);
-          final Uri finalTargetUrl = targetBaseUri.resolve(rewrittenRequest);
-          try {
-            final shelf.Request proxyBackendRequest = shelf.Request(
-              request.method,
-              finalTargetUrl,
-              headers: request.headers,
-              body: request.read(),
-              context: request.context,
-            );
-            return await proxyHandler(targetBaseUri)(proxyBackendRequest);
-          } on Exception catch (e) {
-            globals.printStatus('Proxy error for $finalTargetUrl: $e. Allowing fall-through.');
-            return innerHandler(request);
-          }
-        }
-      }
-      return innerHandler(request);
-    };
-  };
 }

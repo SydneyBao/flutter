@@ -1297,10 +1297,7 @@ void main() {
       final String dummyCertPath = globals.fs.path.join(dataPath, 'tls_cert', 'dummy-cert.pem');
       final String dummyCertKeyPath = globals.fs.path.join(dataPath, 'tls_cert', 'dummy-key.pem');
       final DevConfig devConfig = DevConfig(
-        https: HttpsConfig(
-          certPath: dummyCertPath,
-          certKeyPath: dummyCertKeyPath,
-        ),
+        https: HttpsConfig(certPath: dummyCertPath, certKeyPath: dummyCertKeyPath),
       );
       final WebDevFS webDevFS = WebDevFS(
         packagesFilePath: '.dart_tool/package_config.json',
@@ -1373,9 +1370,7 @@ void main() {
     const String extraHeaderKey = 'hurray';
     const String extraHeaderValue = 'flutter';
 
-    const DevConfig devConfig = DevConfig(
-      headers: <String>['$extraHeaderKey=$extraHeaderValue'],
-    );
+    const DevConfig devConfig = DevConfig(headers: <String>['$extraHeaderKey=$extraHeaderValue']);
 
     final WebAssetServer webAssetServer = await WebAssetServer.start(
       null,
