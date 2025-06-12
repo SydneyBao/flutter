@@ -41,8 +41,10 @@ import '../web/file_generators/flutter_service_worker_js.dart';
 import '../web/file_generators/main_dart.dart' as main_dart;
 import '../web/web_device.dart';
 import '../web/web_runner.dart';
+
 import 'devfs_config.dart';
 import 'devfs_web.dart';
+import 'web_expression_compiler.dart';
 
 /// Injectable factory to create a [ResidentWebRunner].
 class DwdsWebRunnerFactory extends WebRunnerFactory {
@@ -274,48 +276,13 @@ class ResidentWebRunner extends ResidentRunner {
 
     try {
       return await asyncGuard(() async {
-        Future<int> getPort() async {
-          if (debuggingOptions.port == null) {
-            return globals.os.findFreePort();
-          }
-
-          final int? port = int.tryParse(debuggingOptions.port ?? '');
-
-          if (port == null) {
-            logger.printError('''
-Received a non-integer value for port: ${debuggingOptions.port}
-A randomly-chosen available port will be used instead.
-''');
-            return globals.os.findFreePort();
-          }
-
-          if (port < 0 || port > 65535) {
-            throwToolExit('''
-Invalid port: ${debuggingOptions.port}
-Please provide a valid TCP port (an integer between 0 and 65535, inclusive).
-    ''');
-          }
-
-          return port;
-        }
-
         final ExpressionCompiler? expressionCompiler =
             debuggingOptions.webEnableExpressionEvaluation
                 ? WebExpressionCompiler(device!.generator!, fileSystem: _fileSystem)
                 : null;
-        final DevConfig currentDevConfig = DevConfig(
-              host: debuggingOptions.hostname ?? 'localhost',
-              port: await getPort(),
-              https: (debuggingOptions.tlsCertPath != null || debuggingOptions.tlsCertKeyPath != null)
-                  ? HttpsConfig(
-                      certPath: debuggingOptions.tlsCertPath,
-                      certKeyPath: debuggingOptions.tlsCertKeyPath,
-                    )
-                  : null,
-            );
 
         device!.devFS = WebDevFS(
-          devConfig: currentDevConfig,
+          devConfig: debuggingOptions.devConfig ?? const DevConfig(),
           packagesFilePath: packagesFilePath,
           urlTunneller: _urlTunneller,
           useSseForDebugProxy: debuggingOptions.webUseSseForDebugProxy,
@@ -326,7 +293,6 @@ Please provide a valid TCP port (an integer between 0 and 65535, inclusive).
           enableDds: debuggingOptions.enableDds,
           entrypoint: _fileSystem.file(target).uri,
           expressionCompiler: expressionCompiler,
-          extraHeaders: debuggingOptions.webHeaders,
           chromiumLauncher: _chromiumLauncher,
           nativeNullAssertions: debuggingOptions.nativeNullAssertions,
           ddcModuleSystem: debuggingOptions.buildInfo.ddcModuleFormat == DdcModuleFormat.ddc,
@@ -338,7 +304,7 @@ Please provide a valid TCP port (an integer between 0 and 65535, inclusive).
           isWindows: _platform.isWindows,
         );
         Uri url = await device!.devFS!.create();
-        if (debuggingOptions.tlsCertKeyPath != null && debuggingOptions.tlsCertPath != null) {
+        if (debuggingOptions.devConfig!.https?.certKeyPath != null && debuggingOptions.devConfig!.https?.certPath != null) {
           url = url.replace(scheme: 'https');
         }
         if (debuggingOptions.buildInfo.isDebug && !debuggingOptions.webUseWasm) {

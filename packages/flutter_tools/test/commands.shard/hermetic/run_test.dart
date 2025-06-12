@@ -975,7 +975,7 @@ void main() {
           );
 
           final DebuggingOptions options = await command.createDebuggingOptions(true);
-          expect(options.webHeaders, <String, String>{'foo': 'bar'});
+          expect(options.devConfig?.headers, <String, String>{'foo': 'bar'});
         },
         overrides: <Type, Generator>{
           FileSystem: () => fileSystem,
