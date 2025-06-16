@@ -10,6 +10,7 @@ import 'package:fake_async/fake_async.dart';
 import 'package:flutter_tools/src/artifacts.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
+import 'package:flutter_tools/src/base/os.dart';
 import 'package:flutter_tools/src/base/platform.dart';
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/build_system/tools/shader_compiler.dart';
@@ -19,6 +20,8 @@ import 'package:flutter_tools/src/devfs.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/isolated/devfs_config.dart';
 import 'package:flutter_tools/src/isolated/devfs_web.dart';
+import 'package:flutter_tools/src/isolated/release_asset_server.dart';
+import 'package:flutter_tools/src/isolated/web_asset_server.dart';
 import 'package:flutter_tools/src/web/compile.dart';
 import 'package:flutter_tools/src/web_template.dart';
 import 'package:logging/logging.dart' as logging;
@@ -29,6 +32,7 @@ import 'package:test/fake.dart';
 import 'package:vm_service/vm_service.dart' as vm_service;
 
 import '../../src/common.dart';
+import '../../src/fakes.dart';
 import '../../src/testbed.dart';
 
 const List<int> kTransparentImage = <int>[
@@ -87,7 +91,10 @@ void main() {
           needsCoopCoep: false,
         );
       },
-      overrides: <Type, Generator>{Logger: () => logger},
+      overrides: <Type, Generator>{
+        Logger: () => logger,
+        OperatingSystemUtils: () => FakeOperatingSystemUtils(),
+      },
     );
   });
 
@@ -1116,7 +1123,7 @@ void main() {
       false,
       Uri.base,
       null,
-      const <String, String>{},
+
       webRenderer: WebRendererMode.canvaskit,
       isWasm: false,
       useLocalCanvasKit: false,
@@ -1128,12 +1135,11 @@ void main() {
     await webAssetServer.dispose();
   });
 
+//TODO: Same test as in the devfs_web_test.dart, Ask David
   test('passes on extra headers', () async {
     const String extraHeaderKey = 'hurray';
     const String extraHeaderValue = 'flutter';
-    const DevConfig devConfig = DevConfig(
-      headers: <String>['$extraHeaderKey=$extraHeaderValue'],
-    );
+    const DevConfig devConfig = DevConfig(headers: <String,String>{extraHeaderKey: extraHeaderValue});
 
     final WebAssetServer webAssetServer = await WebAssetServer.start(
       null,
@@ -1151,7 +1157,6 @@ void main() {
       false,
       Uri.base,
       null,
-      const <String, String>{extraHeaderKey: extraHeaderValue},
       webRenderer: WebRendererMode.canvaskit,
       isWasm: false,
       useLocalCanvasKit: false,
