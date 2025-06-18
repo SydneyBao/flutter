@@ -14,7 +14,7 @@ void main() {
 
   group('ProxyConfig.fromYaml', () {
     test(
-      'should create StringPrefixProxyConfig with no rewrite',
+      'should create RegexProxyConfig with no rewrite',
       () => testbed.run(() {
         final YamlMap yaml =
             loadYaml('''
@@ -23,15 +23,15 @@ void main() {
                 as YamlMap;
         final ProxyConfig config = ProxyConfig.fromYaml('/api', yaml);
 
-        expect(config, isA<StringPrefixProxyConfig>());
-        expect((config as StringPrefixProxyConfig).prefix, '/api');
+        expect(config, isA<RegexProxyConfig>());
+        expect((config as RegexProxyConfig).pattern.pattern, '^/api');
         expect(config.target, 'http://localhost:8080');
         expect(config.rewrite, isNull);
       }),
     );
 
     test(
-      'should create StringPrefixProxyConfig with boolean rewrite true',
+      'should create RegexProxyConfig with boolean rewrite true',
       () => testbed.run(() {
         final YamlMap yaml =
             loadYaml('''
@@ -41,8 +41,8 @@ void main() {
                 as YamlMap;
         final ProxyConfig config = ProxyConfig.fromYaml('/api', yaml);
 
-        expect(config, isA<StringPrefixProxyConfig>());
-        expect((config as StringPrefixProxyConfig).prefix, '/api');
+        expect(config, isA<RegexProxyConfig>());
+        expect((config as RegexProxyConfig).pattern.pattern, '^/api');
         expect(config.target, 'http://localhost:8080');
         expect(config.rewrite, isNotNull);
         expect(config.getRewrittenPath('/api/users'), '/users');
@@ -52,17 +52,19 @@ void main() {
     );
 
     test(
-      'should create StringPrefixProxyConfig with explicit regex rewrite',
+      'should create RegexProxyConfig with explicit regex rewrite',
       () => testbed.run(() {
         final YamlMap yaml =
             loadYaml('''
         target: http://localhost:8080
-        rewrite: '/old/(.*)->/new/1'
+        rewrite:
+          source: '/old/(.*)'
+          destination: '/new/1'
       ''')
                 as YamlMap;
         final ProxyConfig config = ProxyConfig.fromYaml('/old', yaml);
 
-        expect(config, isA<StringPrefixProxyConfig>());
+        expect(config, isA<RegexProxyConfig>());
         expect(config.getRewrittenPath('/old/path/to/resource'), '/new/1');
         expect(config.getRewrittenPath('/other/path'), '/other/path');
       }),
@@ -109,7 +111,9 @@ void main() {
         final YamlMap yaml =
             loadYaml('''
         target: http://localhost:8081/user-service
-        rewrite: '/users/(\\d+)/profile->/users/info'
+        rewrite:
+          source: '/users/(\\d+)/profile'
+          destination: '/users/info'
       ''')
                 as YamlMap;
         final ProxyConfig config = ProxyConfig.fromYaml('^/users/(d+)/profile', yaml);
@@ -120,7 +124,7 @@ void main() {
     );
 
     test(
-      'should handle invalid regex key gracefully and fall back to StringPrefixProxyConfig',
+      'should handle invalid regex key gracefully and fall back to RegexProxyConfig using the string',
       () => testbed.run(() {
         {
           final YamlMap yaml =
@@ -134,52 +138,12 @@ void main() {
             logger: globals.logger,
           );
 
-          expect(config, isA<StringPrefixProxyConfig>());
-          expect((config as StringPrefixProxyConfig).prefix, '^/invalid(');
+          expect(config, isA<RegexProxyConfig>());
+          expect((config as RegexProxyConfig).pattern.pattern, '^\\^/invalid\\(');
           expect(config.target, 'http://localhost:8082');
         }
       }),
     );
-  });
-
-  group('StringPrefixProxyConfig', () {
-    final StringPrefixProxyConfig configNoRewrite = StringPrefixProxyConfig(
-      prefix: '/api',
-      target: 'http://example.com',
-    );
-    final StringPrefixProxyConfig configWithRewrite = StringPrefixProxyConfig(
-      prefix: '/api',
-      target: 'http://example.com',
-      rewrite: (String path) => path.replaceFirst('/api', '/v2'),
-    );
-
-    test('matches should return true for matching prefix', () {
-      expect(configNoRewrite.matches('/api/users'), isTrue);
-      expect(configNoRewrite.matches('/api'), isTrue);
-    });
-
-    test('matches should return false for non-matching prefix', () {
-      expect(configNoRewrite.matches('/app/users'), isFalse);
-      expect(configNoRewrite.matches('/ApI/users'), isFalse); // Case sensitive
-    });
-
-    test('getRewrittenPath should return original path if no rewrite function', () {
-      expect(configNoRewrite.getRewrittenPath('/api/users'), '/api/users');
-    });
-
-    test('getRewrittenPath should return rewritten path if rewrite function exists', () {
-      expect(configWithRewrite.getRewrittenPath('/api/users/1'), '/v2/users/1');
-      expect(configWithRewrite.getRewrittenPath('/api'), '/v2');
-      expect(configWithRewrite.getRewrittenPath('/other'), '/other');
-    });
-
-    test('toString returns expected format', () {
-      expect(configNoRewrite.toString(), '{prefix: /api, target: http://example.com, rewrite: no}');
-      expect(
-        configWithRewrite.toString(),
-        '{prefix: /api, target: http://example.com, rewrite: yes}',
-      );
-    });
   });
 
   group('RegexProxyConfig', () {
