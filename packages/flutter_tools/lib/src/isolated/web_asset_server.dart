@@ -32,7 +32,6 @@ import 'devfs_proxy.dart';
 import 'release_asset_server.dart';
 import 'web_server_utlities.dart';
 
-
 @visibleForTesting
 void log(logging.LogRecord event) {
   final String error = event.error == null ? '' : 'Error: ${event.error}';

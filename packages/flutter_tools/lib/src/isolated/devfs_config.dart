@@ -43,12 +43,13 @@ class DevConfig {
         if (value is YamlMap) {
           final String keyString = key.toString();
           if (!keyString.endsWith('/')) {
-            globals.logger.printWarning(
+            globals.logger.printError(
               "Proxy key '$keyString' does not end with '/'. Ignoring this proxy rule.",
             );
-          } else {
-            proxyRules.add(ProxyConfig.fromYaml(key.toString(), value));
+
+            return;
           }
+          proxyRules.add(ProxyConfig.fromYaml(keyString, value));
         }
       });
     }
@@ -120,12 +121,18 @@ class HttpsConfig {
   }
 }
 
+/// Loads the web server configuration from `devconfig.yaml`.
+///
+/// If `devconfig.yaml` is not found or cannot be parsed, it returns a [DevConfig]
+/// with default values.
 Future<DevConfig> loadDevConfig({
   String? hostname,
   String? port,
   String? tlsCertPath,
   String? tlsCertKeyPath,
   Map<String, String>? headers,
+  int? debugPort,
+  List<String>? browserFlags,
 }) async {
   const String devConfigFilePath = 'web/devconfig.yaml';
   final io.File devConfigFile = globals.fs.file(devConfigFilePath);
@@ -199,7 +206,6 @@ Future<int> resolvePort(int? port) async {
   if (port == null) {
     return globals.os.findFreePort();
   }
-
   if (port < 0 || port > 65535) {
     throwToolExit('''
 Invalid port: $port

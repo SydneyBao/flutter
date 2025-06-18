@@ -6,6 +6,7 @@ import '../base/logger.dart';
 import '../dart/package_map.dart';
 import '../globals.dart' as globals;
 import '../web_template.dart';
+import 'devfs_proxy.dart';
 
 const String kDefaultIndex = '''
 <html>
