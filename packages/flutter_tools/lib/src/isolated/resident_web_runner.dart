@@ -276,13 +276,24 @@ class ResidentWebRunner extends ResidentRunner {
 
     try {
       return await asyncGuard(() async {
+        final DevConfig originalDevConfig = debuggingOptions.devConfig ?? const DevConfig();
+
+        final int resolvedPort = await resolvePort(originalDevConfig.port);
+
+        final DevConfig updatedDevConfig = DevConfig(
+          host: originalDevConfig.host,
+          port: resolvedPort,
+          headers: originalDevConfig.headers,
+          https: originalDevConfig.https,
+          proxy: originalDevConfig.proxy,
+        );
         final ExpressionCompiler? expressionCompiler =
             debuggingOptions.webEnableExpressionEvaluation
                 ? WebExpressionCompiler(device!.generator!, fileSystem: _fileSystem)
                 : null;
 
         device!.devFS = WebDevFS(
-          devConfig: debuggingOptions.devConfig ?? const DevConfig(),
+          devConfig: updatedDevConfig,
           packagesFilePath: packagesFilePath,
           urlTunneller: _urlTunneller,
           useSseForDebugProxy: debuggingOptions.webUseSseForDebugProxy,
@@ -304,7 +315,8 @@ class ResidentWebRunner extends ResidentRunner {
           isWindows: _platform.isWindows,
         );
         Uri url = await device!.devFS!.create();
-        if (debuggingOptions.devConfig!.https?.certKeyPath != null && debuggingOptions.devConfig!.https?.certPath != null) {
+        if (debuggingOptions.devConfig!.https?.certKeyPath != null &&
+            debuggingOptions.devConfig!.https?.certPath != null) {
           url = url.replace(scheme: 'https');
         }
         if (debuggingOptions.buildInfo.isDebug && !debuggingOptions.webUseWasm) {

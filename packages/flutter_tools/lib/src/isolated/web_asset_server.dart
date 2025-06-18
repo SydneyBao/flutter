@@ -213,7 +213,7 @@ class WebAssetServer implements AssetReader {
       assert(canaryFeatures);
     }
     InternetAddress address;
-    if (effectiveHost == 'localhost') {
+    if (effectiveHost == 'any') {
       address = InternetAddress.anyIPv4;
     } else {
       address = (await InternetAddress.lookup(effectiveHost)).first;
@@ -239,12 +239,16 @@ class WebAssetServer implements AssetReader {
         await Future<void>.delayed(const Duration(milliseconds: 100));
       }
     }
+    httpServer!.defaultResponseHeaders.remove('x-frame-options', 'SAMEORIGIN');
+    for (final MapEntry<String, String> header in effectiveHeaders.entries) {
+      httpServer.defaultResponseHeaders.add(header.key, header.value);
+    }
 
     final PackageConfig packageConfig = buildInfo.packageConfig;
     final Map<String, String> modules = <String, String>{};
     final Map<String, String> digests = <String, String>{};
     final WebAssetServer server = WebAssetServer(
-      httpServer!,
+      httpServer,
       packageConfig,
       address,
       modules,
@@ -256,14 +260,13 @@ class WebAssetServer implements AssetReader {
     );
     final int selectedPort = httpServer.port;
     String url = '$effectiveHost:$selectedPort';
-    if (effectiveHost == 'localhost') {
+    if (effectiveHost == 'any') {
       url = 'localhost:$selectedPort';
     }
     server._baseUri = Uri.http(url, server.basePath);
     if (effectiveCertPath != null && effectiveCertKeyPath != null) {
       server._baseUri = Uri.https(url, server.basePath);
     }
-    globals.printStatus('Dev server listening on ${server._baseUri}');
     if (testMode) {
       return server;
     }
@@ -279,20 +282,9 @@ class WebAssetServer implements AssetReader {
         basePath: server.basePath,
         needsCoopCoep: webRenderer == WebRendererMode.skwasm,
       );
-      const List<String> responseHeadersToRemove = <String>['x-frame-options', 'SAMEORIGIN'];
-
-      shelf.Pipeline pipeline = const shelf.Pipeline();
-      pipeline = pipeline.addMiddleware(
-        manageHeadersMiddleware(
-          headersToInject: effectiveHeaders,
-          headersToRemove: responseHeadersToRemove,
-        ),
-      );
-
-      final shelf.Handler finalReleaseHandler = pipeline.addHandler(releaseAssetServer.handle);
       runZonedGuarded(
         () {
-          shelf.serveRequests(httpServer!, finalReleaseHandler);
+          shelf.serveRequests(httpServer!, releaseAssetServer.handle);
         },
         (Object e, StackTrace s) {
           globals.printTrace('Release asset server: error serving requests: $e:$s');
@@ -391,15 +383,8 @@ class WebAssetServer implements AssetReader {
           connectedWebDeviceIds.isNotEmpty &&
           connectedWebDeviceIds.contains(globals.deviceManager?.specifiedDeviceId ?? 'chrome'),
     );
-    const List<String> responseHeadersToRemove = <String>['x-frame-options', 'SAMEORIGIN'];
 
     shelf.Pipeline pipeline = const shelf.Pipeline();
-    pipeline = pipeline.addMiddleware(
-      manageHeadersMiddleware(
-        headersToInject: effectiveHeaders,
-        headersToRemove: responseHeadersToRemove,
-      ),
-    );
     if (enableDwds) {
       pipeline = pipeline.addMiddleware(middleware);
       pipeline = pipeline.addMiddleware(dwds.middleware);
