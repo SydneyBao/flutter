@@ -1,6 +1,6 @@
 import 'package:shelf/shelf.dart' as shelf;
+import 'package:shelf_proxy/shelf_proxy.dart';
 import 'package:yaml/yaml.dart';
-
 import '/src/base/logger.dart';
 import '../globals.dart' as globals;
 
@@ -116,4 +116,33 @@ shelf.Request proxyRequest(shelf.Request originalRequest, Uri finalTargetUrl) {
     body: originalRequest.read(),
     context: originalRequest.context,
   );
+}
+
+shelf.Middleware proxyMiddleware(List<ProxyConfig> effectiveProxy) {
+  return (shelf.Handler innerHandler) {
+    return (shelf.Request request) async {
+      final String requestPath = normalizePath(request.url.path);
+
+      for (final ProxyConfig config in effectiveProxy) {
+        if (config.matches(requestPath)) {
+          final Uri targetBaseUri = Uri.parse(config.target);
+          final String rewrittenRequest = config.getRewrittenPath(requestPath);
+          final Uri finalTargetUrl = targetBaseUri.resolve(rewrittenRequest);
+          try {
+            final shelf.Request proxyBackendRequest = proxyRequest(request, finalTargetUrl);
+
+            return await proxyHandler(targetBaseUri)(proxyBackendRequest);
+          } on Exception catch (e) {
+            globals.logger.printError(
+              'Proxy error for $finalTargetUrl: $e. Allowing fall-through.',
+            );
+
+            return innerHandler(request);
+          }
+        }
+      }
+
+      return innerHandler(request);
+    };
+  };
 }
