@@ -28,9 +28,9 @@ import '../web/module_metadata.dart';
 import '../web_template.dart';
 
 import 'devfs_config.dart';
+import 'devfs_proxy.dart';
 import 'release_asset_server.dart';
 import 'web_server_utlities.dart';
-
 
 @visibleForTesting
 void log(logging.LogRecord event) {

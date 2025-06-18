@@ -18,7 +18,10 @@ import 'package:flutter_tools/src/convert.dart';
 import 'package:flutter_tools/src/devfs.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/isolated/devfs_config.dart';
+import 'package:flutter_tools/src/isolated/devfs_proxy.dart';
 import 'package:flutter_tools/src/isolated/devfs_web.dart';
+import 'package:flutter_tools/src/isolated/release_asset_server.dart';
+import 'package:flutter_tools/src/isolated/web_asset_server.dart';
 import 'package:flutter_tools/src/web/compile.dart';
 import 'package:flutter_tools/src/web_template.dart';
 import 'package:logging/logging.dart' as logging;
@@ -1058,11 +1061,8 @@ void main() {
     final String dummyCertKeyPath = globals.fs.path.join(dataPath, 'tls_cert', 'dummy-key.pem');
 
     final DevConfig devConfig = DevConfig(
-        https: HttpsConfig(
-          certPath: dummyCertPath,
-          certKeyPath: dummyCertKeyPath,
-        ),
-      );
+      https: HttpsConfig(certPath: dummyCertPath, certKeyPath: dummyCertKeyPath),
+    );
     final WebDevFS webDevFS = WebDevFS(
       packagesFilePath: '.dart_tool/package_config.json',
       urlTunneller: null,
@@ -1116,7 +1116,7 @@ void main() {
       false,
       Uri.base,
       null,
-      const <String, String>{},
+      // const <String, String>{},
       webRenderer: WebRendererMode.canvaskit,
       isWasm: false,
       useLocalCanvasKit: false,
@@ -1132,9 +1132,8 @@ void main() {
     const String extraHeaderKey = 'hurray';
     const String extraHeaderValue = 'flutter';
     const DevConfig devConfig = DevConfig(
-      headers: <String>['$extraHeaderKey=$extraHeaderValue'],
+      headers: <String, String>{extraHeaderKey: extraHeaderValue},
     );
-
     final WebAssetServer webAssetServer = await WebAssetServer.start(
       null,
       null,
@@ -1151,7 +1150,7 @@ void main() {
       false,
       Uri.base,
       null,
-      const <String, String>{extraHeaderKey: extraHeaderValue},
+      // const <String, String>{extraHeaderKey: extraHeaderValue},
       webRenderer: WebRendererMode.canvaskit,
       isWasm: false,
       useLocalCanvasKit: false,

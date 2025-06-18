@@ -152,7 +152,15 @@ class BrowserConfig {
 ///
 /// If `devconfig.yaml` is not found or cannot be parsed, it returns a [DevConfig]
 /// with default values.
-Future<DevConfig> loadDevConfig() async {
+Future<DevConfig> loadDevConfig({
+  String? hostname,
+  String? port,
+  String? tlsCertPath,
+  String? tlsCertKeyPath,
+  Map<String, String>? headers,
+  int? debugPort,
+  List<String>? browserFlags,
+}) async {
   const String devConfigFilePath = 'web/devconfig.yaml';
   final io.File devConfigFile = globals.fs.file(devConfigFilePath);
   DevConfig fileConfig = const DevConfig();
@@ -216,10 +224,7 @@ Future<DevConfig> loadDevConfig() async {
               certKeyPath: tlsCertKeyPath ?? fileConfig.https?.certKeyPath,
             )
             : null,
-    headers: <String, String>{
-      ...fileConfig.headers,
-      ...?headers,
-    },
+    headers: <String, String>{...fileConfig.headers, ...?headers},
     proxy: fileConfig.proxy,
   );
 }
@@ -230,7 +235,8 @@ shelf.Middleware manageHeadersMiddleware({
 }) {
   return (shelf.Handler innerHandler) {
     return (shelf.Request request) async {
-      final Map<String, String> newRequestHeaders = Map<String, String>.of(request.headers)..addAll(headersToInject);
+      final Map<String, String> newRequestHeaders = Map<String, String>.of(request.headers)
+        ..addAll(headersToInject);
 
       for (final String headerNameToRemove in headersToRemove) {
         newRequestHeaders.remove(headerNameToRemove.toLowerCase());
