@@ -13,65 +13,52 @@ String normalizePath(String path) {
   return normalized;
 }
 
-abstract class ProxyConfig {
-  ProxyConfig({required this.target, this.rewrite});
+abstract class ProxyRule {
+  ProxyRule({required this.target});
 
-  factory ProxyConfig.fromYaml(String key, YamlMap yaml, {Logger? logger}) {
-    String Function(String)? rewriteFn;
+  final String target;
+  String replace(String path);
+  bool matches(String path);
 
-    final dynamic rewriteYamlValue = yaml['rewrite'];
+  String getReplacedPath(String path) {
+    return normalizePath(replace(path));
+  }
 
+  static ProxyRule? fromYaml(YamlMap yaml, {Logger? logger}) {
+    final String? target = yaml['target'] as String?;
+    final String? source = yaml['source'] as String?;
+    final String? regex = yaml['regex'] as String?;
+    final String? replace = yaml['replace'] as String?;
     final Logger effectiveLogger = logger ?? globals.logger;
 
-    if (rewriteYamlValue is bool && rewriteYamlValue) {
-      rewriteFn = (String path) => path.replaceFirst(key, '');
-    } else if (rewriteYamlValue is YamlMap) {
-      final dynamic source = rewriteYamlValue['source'];
-      final dynamic destination = rewriteYamlValue['destination'];
+    RegExp? proxyPattern;
 
-      if (source is String && source.isNotEmpty && destination is String) {
-        try {
-          final RegExp pattern = RegExp(source.trim());
-          final String replacementTemplate = destination.trim();
-
-          rewriteFn = (String path) {
-            return path.replaceAllMapped(pattern, (Match match) {
-              String result = replacementTemplate;
-
-              for (int i = 0; i <= match.groupCount; i++) {
-                result = result.replaceAll('\$$i', match.group(i) ?? '');
-              }
-              return result;
-            });
-          };
-        } on FormatException catch (e) {
-          effectiveLogger.printWarning(
-            "Invalid regex pattern in rewrite 'source': '$source'. Ignoring rewrite. Error: $e",
-          );
-        }
-      } else {
-        effectiveLogger.printWarning(
-          "Invalid rewrite rule format. Expected 'source' and 'destination' fields in rewrite map. Ignoring rewrite.",
-        );
-      }
-    } else if (rewriteYamlValue != null) {
-      effectiveLogger.printWarning(
-        "Invalid rewrite rule format. Expected 'bool' or 'Map' for rewrite. Ignoring rewrite.",
+    if (target == null) {
+      effectiveLogger.printError("Invalid 'target'. 'target' cannot be null");
+      return null;
+    }
+    //source
+    if (source != null && source.isNotEmpty) {
+      return SourceProxyRule(
+        source: normalizePath(source),
+        target: target,
+        replacement: replace?.trim(),
       );
     }
-    RegExp proxyPattern;
-    if (key.startsWith('^')) {
+    //regex
+    else if (regex != null && regex.isNotEmpty) {
       try {
-        if (key.isNotEmpty && key.endsWith('/')) {
-          key = key.substring(0, key.length - 1);
-        }
-        proxyPattern = RegExp(key);
+        proxyPattern = RegExp(regex.trim());
       } on FormatException catch (e) {
-        effectiveLogger.printWarning('Invalid regex pattern "$key". Treating as string prefix: $e');
-        proxyPattern = RegExp('^${RegExp.escape(key)}');
+        proxyPattern = RegExp(RegExp.escape(regex));
+        effectiveLogger.printWarning(
+          "Invalid regex pattern in replace 'regex': '$regex'. Treating $regex as string. Error: $e",
+        );
       }
+      return RegexProxyRule(pattern: proxyPattern, target: target, replacement: replace?.trim());
     } else {
-      proxyPattern = RegExp('^${RegExp.escape(key)}');
+      effectiveLogger.printError("'source' or 'regex' field must be provided");
+      return null;
     }
 
     return RegexProxyConfig(
@@ -80,21 +67,13 @@ abstract class ProxyConfig {
       rewrite: rewriteFn,
     );
   }
-
-  final String target;
-  final String Function(String)? rewrite;
-
-  bool matches(String path);
-
-  String getRewrittenPath(String path) {
-    return normalizePath(rewrite?.call(path) ?? path);
-  }
 }
 
-class RegexProxyConfig extends ProxyConfig {
-  RegexProxyConfig({required this.pattern, required super.target, super.rewrite});
+class RegexProxyRule extends ProxyRule {
+  RegexProxyRule({required this.pattern, required super.target, this.replacement});
 
   final RegExp pattern;
+  final String? replacement;
 
   @override
   bool matches(String path) {
@@ -102,8 +81,47 @@ class RegexProxyConfig extends ProxyConfig {
   }
 
   @override
+  String replace(String path) {
+    if (replacement == null) {
+      return path;
+    }
+    return path.replaceAllMapped(pattern, (Match match) {
+      String result = replacement!;
+
+      for (int i = 0; i <= match.groupCount; i++) {
+        result = result.replaceAll('\$$i', match.group(i) ?? '');
+      }
+      return result;
+    });
+  }
+
+  @override
   String toString() {
-    return '{pattern: ${pattern.pattern}, target: $target, rewrite: ${rewrite != null ? 'yes' : 'no'}}';
+    return '{pattern: ${pattern.pattern}, target: $target, replacement: ${replacement ?? 'null'}}}';
+  }
+}
+
+class SourceProxyRule extends ProxyRule {
+  SourceProxyRule({required this.source, required super.target, this.replacement});
+  final String source;
+  final String? replacement;
+
+  @override
+  bool matches(String path) {
+    return path.startsWith(source);
+  }
+
+  @override
+  String replace(String path) {
+    if (replacement == null) {
+      return path;
+    }
+    return path.replaceFirst(source, replacement!);
+  }
+
+  @override
+  String toString() {
+    return '{source: $source, target: $target, replacement: ${replacement ?? 'null'}}}';
   }
 }
 
@@ -115,4 +133,38 @@ shelf.Request proxyRequest(shelf.Request originalRequest, Uri finalTargetUrl) {
     body: originalRequest.read(),
     context: originalRequest.context,
   );
+}
+
+shelf.Middleware proxyMiddleware(List<ProxyRule> effectiveProxy) {
+  return (shelf.Handler innerHandler) {
+    return (shelf.Request request) async {
+      final String requestPath = normalizePath(request.url.path);
+      for (final ProxyRule rule in effectiveProxy) {
+        if (rule.matches(requestPath)) {
+          final Uri targetBaseUri = Uri.parse(rule.target);
+          final String rewrittenRequest = rule.getReplacedPath(requestPath);
+          final Uri finalTargetUrl = targetBaseUri.resolve(rewrittenRequest);
+          try {
+            final shelf.Request proxyBackendRequest = proxyRequest(request, finalTargetUrl);
+            final shelf.Response proxyResponse = await proxyHandler(targetBaseUri)(
+              proxyBackendRequest,
+            );
+
+            if (proxyResponse.statusCode == 404) {
+              return innerHandler(request);
+            }
+            return proxyResponse;
+          } on Exception catch (e) {
+            globals.logger.printError(
+              'Proxy error for $finalTargetUrl: $e. Allowing fall-through.',
+            );
+
+            return innerHandler(request);
+          }
+        }
+      }
+
+      return innerHandler(request);
+    };
+  };
 }

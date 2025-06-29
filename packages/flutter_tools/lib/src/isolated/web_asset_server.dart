@@ -204,7 +204,7 @@ class WebAssetServer implements AssetReader {
     final String? effectiveCertPath = devConfig.https?.certPath;
     final String? effectiveCertKeyPath = devConfig.https?.certKeyPath;
     final Map<String, String> effectiveHeaders = devConfig.headers;
-    final List<ProxyConfig> effectiveProxy = devConfig.proxy;
+    final List<ProxyRule> effectiveProxy = devConfig.proxy;
 
     HttpServer? httpServer;
     const int kMaxRetries = 4;
@@ -222,11 +222,15 @@ class WebAssetServer implements AssetReader {
     for (int i = 0; i <= kMaxRetries; i++) {
       try {
         if (effectiveCertPath != null && effectiveCertKeyPath != null) {
-          final SecurityContext serverContext =
-              SecurityContext()
-                ..useCertificateChain(effectiveCertPath)
-                ..usePrivateKey(effectiveCertKeyPath);
-          httpServer = await HttpServer.bindSecure(address, effectivePort, serverContext);
+          final SecurityContext serverContext = SecurityContext();
+          try {
+            serverContext.useCertificateChain(globals.fs.file(effectiveCertPath).absolute.path);
+            serverContext.usePrivateKey(globals.fs.file(effectiveCertKeyPath).absolute.path);
+            httpServer = await HttpServer.bindSecure(address, effectivePort, serverContext);
+          } catch (e) {
+            globals.printError('Error loading SSL certificate or key: $e');
+            rethrow;
+          }
         } else {
           httpServer = await HttpServer.bind(address, effectivePort);
         }

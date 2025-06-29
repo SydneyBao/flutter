@@ -20,7 +20,7 @@ class DevConfig {
     this.host = 'localhost',
     this.port,
     this.https,
-    this.proxy = const <ProxyConfig>[],
+    this.proxy = const <ProxyRule>[],
   });
 
   factory DevConfig.fromYaml(YamlMap yaml) {
@@ -37,21 +37,17 @@ class DevConfig {
       throwToolExit('Https must be a Map. Found ${yaml['https'].runtimeType}');
     }
 
-    final List<ProxyConfig> proxyRules = <ProxyConfig>[];
-    if (yaml['proxy'] is YamlMap) {
-      (yaml['proxy'] as YamlMap).forEach((dynamic key, dynamic value) {
-        if (value is YamlMap) {
-          final String keyString = key.toString();
-          if (!keyString.endsWith('/')) {
-            globals.logger.printError(
-              "Proxy key '$keyString' does not end with '/'. Ignoring this proxy rule.",
-            );
-
-            return;
+    final List<ProxyRule> proxyRules = <ProxyRule>[];
+    if (yaml['proxy'] is YamlList) {
+      final YamlList proxyList = yaml['proxy'] as YamlList;
+      for (final dynamic item in proxyList) {
+        if (item is YamlMap) {
+          final ProxyRule? rule = ProxyRule.fromYaml(item);
+          if (rule != null) {
+            proxyRules.add(rule);
           }
-          proxyRules.add(ProxyConfig.fromYaml(keyString, value));
         }
-      });
+      }
     }
 
     final Map<String, String> headers = <String, String>{};
@@ -72,9 +68,9 @@ class DevConfig {
 
   final Map<String, String> headers;
   final String? host;
-  final int? port; // <-- KEY FIX: Changed back to a simple int.
+  final int? port;
   final HttpsConfig? https;
-  final List<ProxyConfig> proxy;
+  final List<ProxyRule> proxy;
 
   @override
   String toString() {
