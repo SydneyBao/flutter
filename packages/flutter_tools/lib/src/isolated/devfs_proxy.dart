@@ -60,12 +60,6 @@ abstract class ProxyRule {
       effectiveLogger.printError("'source' or 'regex' field must be provided");
       return null;
     }
-
-    return RegexProxyConfig(
-      pattern: proxyPattern,
-      target: yaml['target'] as String,
-      rewrite: rewriteFn,
-    );
   }
 }
 
