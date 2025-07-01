@@ -38,6 +38,7 @@ abstract class ProxyRule {
     if (source != null && source.isNotEmpty) {
       return SourceProxyRule(source: source, target: target, replacement: replace?.trim());
     }
+    
     //regex
     else if (regex != null && regex.isNotEmpty) {
       try {
