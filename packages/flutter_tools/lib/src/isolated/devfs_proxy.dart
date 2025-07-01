@@ -4,16 +4,6 @@ import 'package:yaml/yaml.dart';
 import '/src/base/logger.dart';
 import '../globals.dart' as globals;
 
-String _normalizePath(String path) {
-  String normalized = path.replaceAll(RegExp(r'/+'), '/');
-
-  if (!normalized.startsWith('/')) {
-    normalized = '/$normalized';
-  }
-
-  return normalized;
-}
-
 abstract class ProxyRule {
   ProxyRule({required this.target});
 
@@ -34,13 +24,9 @@ abstract class ProxyRule {
       effectiveLogger.printError("Invalid 'target'. 'target' cannot be null");
       return null;
     }
-    //source
     if (source != null && source.isNotEmpty) {
       return SourceProxyRule(source: source, target: target, replacement: replace?.trim());
-    }
-    
-    //regex
-    else if (regex != null && regex.isNotEmpty) {
+    } else if (regex != null && regex.isNotEmpty) {
       try {
         proxyPattern = RegExp(regex.trim());
       } on FormatException catch (e) {
@@ -126,7 +112,7 @@ shelf.Request proxyRequest(shelf.Request originalRequest, Uri finalTargetUrl) {
 shelf.Middleware proxyMiddleware(List<ProxyRule> effectiveProxy) {
   return (shelf.Handler innerHandler) {
     return (shelf.Request request) async {
-      final String requestPath = _normalizePath(request.url.path);
+      final String requestPath = '/${request.url.path}';
       for (final ProxyRule rule in effectiveProxy) {
         if (rule.matches(requestPath)) {
           final Uri targetBaseUri = Uri.parse(rule.target);
@@ -137,8 +123,17 @@ shelf.Middleware proxyMiddleware(List<ProxyRule> effectiveProxy) {
             final shelf.Response proxyResponse = await proxyHandler(targetBaseUri)(
               proxyBackendRequest,
             );
-
+            final bool internalRequest = proxyResponse.headers['sec-fetch-mode'] == 'no-cors';
+            if (!internalRequest) {
+              globals.logger.printStatus(
+                '[PROXY] Matched "$requestPath". Requesting "$finalTargetUrl"',
+              );
+              globals.logger.printTrace('[PROXY] Matched with proxy rule: $rule');
+            }
             if (proxyResponse.statusCode == 404) {
+              if (!internalRequest) {
+                globals.printTrace('"$finalTargetUrl" responded with status 404');
+              }
               return innerHandler(request);
             }
             return proxyResponse;

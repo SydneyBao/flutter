@@ -13,48 +13,47 @@ import '../base/common.dart';
 import '../globals.dart' as globals;
 import 'devfs_proxy.dart';
 
+const String devConfigFilePath = 'web/devconfig.yaml';
+
 @immutable
 class DevConfig {
   const DevConfig({
     this.headers = const <String, String>{},
-    this.host = 'localhost',
+    this.host = 'any',
     this.port,
     this.https,
     this.proxy = const <ProxyRule>[],
   });
 
   factory DevConfig.fromYaml(YamlMap yaml) {
+    if (yaml['headers'] is! YamlMap && yaml['headers'] != null) {
+      throwToolExit('Headers must be a Map. Found ${yaml['headers'].runtimeType}');
+    }
+    final Map<String, String> headers = <String, String>{};
+    (yaml['headers'] as YamlMap).forEach((dynamic key, dynamic value) {
+      headers[key.toString()] = value.toString();
+    });
     if (yaml['host'] is! String && yaml['host'] != null) {
       throwToolExit('Host must be a String. Found ${yaml['host'].runtimeType}');
     }
     if (yaml['port'] is! int && yaml['port'] != null) {
       throwToolExit('Port must be an int. Found ${yaml['port'].runtimeType}');
     }
-    if (yaml['headers'] is! YamlMap && yaml['headers'] != null) {
-      throwToolExit('Headers must be a Map. Found ${yaml['headers'].runtimeType}');
-    }
     if (yaml['https'] is! YamlMap && yaml['https'] != null) {
       throwToolExit('Https must be a Map. Found ${yaml['https'].runtimeType}');
     }
-
+    if (yaml['proxy'] is! YamlList && yaml['proxy'] != null) {
+      throwToolExit('Proxy must be a list. Found ${yaml['https'].runtimeType}');
+    }
     final List<ProxyRule> proxyRules = <ProxyRule>[];
-    if (yaml['proxy'] is YamlList) {
-      final YamlList proxyList = yaml['proxy'] as YamlList;
-      for (final dynamic item in proxyList) {
-        if (item is YamlMap) {
-          final ProxyRule? rule = ProxyRule.fromYaml(item);
-          if (rule != null) {
-            proxyRules.add(rule);
-          }
+    final YamlList proxyList = yaml['proxy'] as YamlList;
+    for (final dynamic item in proxyList) {
+      if (item is YamlMap) {
+        final ProxyRule? rule = ProxyRule.fromYaml(item);
+        if (rule != null) {
+          proxyRules.add(rule);
         }
       }
-    }
-
-    final Map<String, String> headers = <String, String>{};
-    if (yaml['headers'] is YamlMap) {
-      (yaml['headers'] as YamlMap).forEach((dynamic key, dynamic value) {
-        headers[key.toString()] = value.toString();
-      });
     }
 
     return DevConfig(
@@ -86,10 +85,8 @@ class DevConfig {
 
 @immutable
 class HttpsConfig {
-  /// Create a new [HttpsConfig] object.
   const HttpsConfig({required this.certPath, required this.certKeyPath});
 
-  /// Create a [HttpsConfig] from a `https` YAML map.
   factory HttpsConfig.fromYaml(YamlMap yaml) {
     if (yaml['cert-path'] is! String && yaml['cert-path'] != null) {
       throwToolExit('Https cert-path must be a String. Found ${yaml['cert-path'].runtimeType}');
@@ -117,10 +114,18 @@ class HttpsConfig {
   }
 }
 
-/// Loads the web server configuration from `devconfig.yaml`.
-///
-/// If `devconfig.yaml` is not found or cannot be parsed, it returns a [DevConfig]
-/// with default values.
+T? _getOverriddenValue<T>(String filedName, T? fileValue, T? cliValue) {
+  if (cliValue != null) {
+    if (fileValue != null && cliValue != fileValue) {
+      globals.printStatus(
+        'Overriding $filedName from $devConfigFilePath ($fileValue) with command-line argument ($cliValue)',
+      );
+    }
+    return cliValue;
+  }
+  return fileValue;
+}
+
 Future<DevConfig> loadDevConfig({
   String? hostname,
   String? port,
@@ -130,14 +135,11 @@ Future<DevConfig> loadDevConfig({
   int? debugPort,
   List<String>? browserFlags,
 }) async {
-  const String devConfigFilePath = 'web/devconfig.yaml';
   final io.File devConfigFile = globals.fs.file(devConfigFilePath);
   DevConfig fileConfig = const DevConfig();
 
   if (!devConfigFile.existsSync()) {
-    globals.printStatus(
-      'No $devConfigFilePath found. Running with default web server configuration.',
-    );
+    globals.printStatus('No $devConfigFilePath found');
   } else {
     try {
       final String devConfigContent = await devConfigFile.readAsString();
@@ -165,8 +167,8 @@ Future<DevConfig> loadDevConfig({
 
       final YamlMap serverYaml = contents['server'] as YamlMap;
       fileConfig = DevConfig.fromYaml(serverYaml);
-      globals.printStatus('\nParsed devconfig.yaml:');
-      globals.printStatus(fileConfig.toString());
+      globals.printStatus('\nLoaded configuration from $devConfigFilePath');
+      globals.printTrace(fileConfig.toString());
     } on YamlException catch (e) {
       String errorMessage = 'Error: Failed to parse $devConfigFilePath: ${e.message}';
       if (e.span != null) {
@@ -183,17 +185,43 @@ Future<DevConfig> loadDevConfig({
     }
   }
 
+  final String finalHost =
+      _getOverriddenValue<String>('host', fileConfig.host, hostname) ?? 'localhost';
+  final int? finalPort = _getOverriddenValue<int>('port', fileConfig.port, int.tryParse(port!));
+  final String? finalCertPath = _getOverriddenValue<String>(
+    'TLS cert path',
+    fileConfig.https?.certPath,
+    tlsCertPath,
+  );
+  final String? finalCertKeyPath = _getOverriddenValue<String>(
+    'TLS cert key path',
+    fileConfig.https?.certKeyPath,
+    tlsCertKeyPath,
+  );
+  final HttpsConfig? finalHttpsConfig = HttpsConfig(
+    certPath: finalCertPath,
+    certKeyPath: finalCertKeyPath,
+  );
+  final Map<String, String> finalHeaders = <String, String>{};
+  finalHeaders.addAll(fileConfig.headers);
+  if (headers != null && headers.isNotEmpty) {
+    for (final MapEntry<String, String> entry in headers.entries) {
+      if (fileConfig.headers.containsKey(entry.key)) {
+        globals.printStatus(
+          'Overriding headers "${entry.key}" from $devConfigFilePath ("${fileConfig.headers[entry.key]}") with command-line argument("${entry.value}").',
+        );
+      } else {
+        globals.printStatus('Adding header "${entry.key}" from command-line arguments.');
+      }
+    }
+    finalHeaders.addAll(headers);
+  }
+
   return DevConfig(
-    host: hostname ?? fileConfig.host,
-    port: port != null ? int.tryParse(port) : fileConfig.port,
-    https:
-        (tlsCertPath != null || tlsCertKeyPath != null || fileConfig.https != null)
-            ? HttpsConfig(
-              certPath: tlsCertPath ?? fileConfig.https?.certPath,
-              certKeyPath: tlsCertKeyPath ?? fileConfig.https?.certKeyPath,
-            )
-            : null,
-    headers: <String, String>{...fileConfig.headers, ...?headers},
+    host: finalHost,
+    port: finalPort,
+    https: finalHttpsConfig,
+    headers: finalHeaders,
     proxy: fileConfig.proxy,
   );
 }
