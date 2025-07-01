@@ -1,9 +1,10 @@
 import 'package:shelf/shelf.dart' as shelf;
+import 'package:shelf_proxy/shelf_proxy.dart';
 import 'package:yaml/yaml.dart';
 import '/src/base/logger.dart';
 import '../globals.dart' as globals;
 
-String normalizePath(String path) {
+String _normalizePath(String path) {
   String normalized = path.replaceAll(RegExp(r'/+'), '/');
 
   if (!normalized.startsWith('/')) {
@@ -20,10 +21,6 @@ abstract class ProxyRule {
   String replace(String path);
   bool matches(String path);
 
-  String getReplacedPath(String path) {
-    return normalizePath(replace(path));
-  }
-
   static ProxyRule? fromYaml(YamlMap yaml, {Logger? logger}) {
     final String? target = yaml['target'] as String?;
     final String? source = yaml['source'] as String?;
@@ -39,11 +36,7 @@ abstract class ProxyRule {
     }
     //source
     if (source != null && source.isNotEmpty) {
-      return SourceProxyRule(
-        source: normalizePath(source),
-        target: target,
-        replacement: replace?.trim(),
-      );
+      return SourceProxyRule(source: source, target: target, replacement: replace?.trim());
     }
     //regex
     else if (regex != null && regex.isNotEmpty) {
@@ -60,12 +53,6 @@ abstract class ProxyRule {
       effectiveLogger.printError("'source' or 'regex' field must be provided");
       return null;
     }
-
-    return RegexProxyConfig(
-      pattern: proxyPattern,
-      target: yaml['target'] as String,
-      rewrite: rewriteFn,
-    );
   }
 }
 
@@ -97,7 +84,7 @@ class RegexProxyRule extends ProxyRule {
 
   @override
   String toString() {
-    return '{pattern: ${pattern.pattern}, target: $target, replacement: ${replacement ?? 'null'}}}';
+    return '{pattern: ${pattern.pattern}, target: $target, replacement: ${replacement ?? 'null'}}';
   }
 }
 
@@ -121,7 +108,7 @@ class SourceProxyRule extends ProxyRule {
 
   @override
   String toString() {
-    return '{source: $source, target: $target, replacement: ${replacement ?? 'null'}}}';
+    return '{source: $source, target: $target, replacement: ${replacement ?? 'null'}}';
   }
 }
 
@@ -138,11 +125,11 @@ shelf.Request proxyRequest(shelf.Request originalRequest, Uri finalTargetUrl) {
 shelf.Middleware proxyMiddleware(List<ProxyRule> effectiveProxy) {
   return (shelf.Handler innerHandler) {
     return (shelf.Request request) async {
-      final String requestPath = normalizePath(request.url.path);
+      final String requestPath = _normalizePath(request.url.path);
       for (final ProxyRule rule in effectiveProxy) {
         if (rule.matches(requestPath)) {
           final Uri targetBaseUri = Uri.parse(rule.target);
-          final String rewrittenRequest = rule.getReplacedPath(requestPath);
+          final String rewrittenRequest = rule.replace(requestPath);
           final Uri finalTargetUrl = targetBaseUri.resolve(rewrittenRequest);
           try {
             final shelf.Request proxyBackendRequest = proxyRequest(request, finalTargetUrl);
