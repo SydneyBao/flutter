@@ -168,7 +168,6 @@ void main() {
       target: 'http://legacy.com',
       replacement: '/new_path',
     );
-
     final RegexProxyRule ruleMiddlePattern = RegexProxyRule(
       pattern: RegExp(r'/test_static'),
       target: 'http://static.com',
@@ -260,6 +259,7 @@ void main() {
       expect(
         ruleNoReplacement.toString(),
         '{pattern: ^/users/(\\d+)\, target: http://example.com, replacement: null}',
+
       );
       expect(
         rulePrefixRemovalReplacement.toString(),
@@ -335,7 +335,6 @@ void main() {
     test('replace should return original path for non-matching source', () {
       expect(ruleWithReplacement.replace('/other-path/file.txt'), '/other-path/file.txt');
     });
-
     test('toString provides useful debug information', () {
       expect(
         ruleNoReplacement.toString(),
