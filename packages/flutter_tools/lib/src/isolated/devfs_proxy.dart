@@ -19,14 +19,19 @@ abstract class ProxyRule {
     final Logger effectiveLogger = logger ?? globals.logger;
 
     RegExp? proxyPattern;
-
-    if (target == null) {
-      effectiveLogger.printError("Invalid 'target'. 'target' cannot be null");
-      return null;
-    }
     if (source != null && source.isNotEmpty) {
+      if (target == null) {
+        effectiveLogger.printError(
+          "Invalid 'target' for 'source': $source. 'target' cannot be null",
+        );
+        return null;
+      }
       return SourceProxyRule(source: source, target: target, replacement: replace?.trim());
     } else if (regex != null && regex.isNotEmpty) {
+      if (target == null) {
+        effectiveLogger.printError("Invalid 'target' for 'regex': $regex. 'target' cannot be null");
+        return null;
+      }
       try {
         proxyPattern = RegExp(regex.trim());
       } on FormatException catch (e) {

@@ -153,7 +153,7 @@ void main() {
 
   group('RegexProxyRule', () {
     final RegexProxyRule ruleNoReplacement = RegexProxyRule(
-      pattern: RegExp(r'^/users/(\d+)$'),
+      pattern: RegExp(r'^/users/(\d+)'),
       target: 'http://example.com',
     );
 
@@ -169,18 +169,6 @@ void main() {
       replacement: '/new_path',
     );
 
-    final RegexProxyRule ruleFixedReplacement = RegexProxyRule(
-      pattern: RegExp(r'^/admin/data'),
-      target: 'http://management.com',
-      replacement: '/dashboard',
-    );
-
-    final RegexProxyRule ruleFullPathReplacement = RegexProxyRule(
-      pattern: RegExp(r'/some/random/path/image.jpg'),
-      target: 'http://global.com',
-      replacement: '/static/index.html',
-    );
-
     final RegexProxyRule ruleMiddlePattern = RegexProxyRule(
       pattern: RegExp(r'/test_static'),
       target: 'http://static.com',
@@ -192,6 +180,11 @@ void main() {
       target: 'http://exact.com',
       replacement: '/found',
     );
+    final RegexProxyRule ruleZeroGroup = RegexProxyRule(
+      pattern: RegExp(r'^/prefix/(.*)'),
+      target: 'http://test.com',
+      replacement: '/all\$0',
+    );
 
     test('matches should return true for matching regex', () {
       expect(ruleNoReplacement.matches('/users/123'), isTrue);
@@ -200,17 +193,14 @@ void main() {
         isTrue,
       );
       expect(rulePrefixRemovalReplacement.matches('/old_path/resource'), isTrue);
-      expect(ruleFixedReplacement.matches('/admin/data/config'), isTrue);
-      expect(ruleFullPathReplacement.matches('/some/random/path/image.jpg'), isTrue);
       expect(ruleMiddlePattern.matches('hello/test_static/image.png'), isTrue);
       expect(ruleExactMatch.matches('/exact_match_only'), isTrue);
+      expect(ruleZeroGroup.matches('/prefix/prefix'), isTrue);
     });
 
     test('matches should return false for non-matching regex', () {
-      expect(ruleNoReplacement.matches('/customers/123'), isFalse);
-      expect(ruleNoReplacement.matches('/users/abc'), isFalse);
       expect(ruleWithCapturingGroupReplacement.matches('/api/v2/users/123'), isFalse);
-      expect(rulePrefixRemovalReplacement.matches('/wrong_path/resource'), isFalse);
+      expect(rulePrefixRemovalReplacement.matches('/hello/old_path/resource'), isFalse);
       expect(ruleExactMatch.matches('/exact_match_only/suffix'), isFalse);
     });
 
@@ -234,13 +224,21 @@ void main() {
       expect(rulePrefixRemovalReplacement.replace('/old_path'), '/new_path');
     });
 
-    test('replace should apply fixed replacement', () {
-      expect(ruleFixedReplacement.replace('/admin/data/metrics'), '/dashboard/metrics');
-      expect(ruleFixedReplacement.replace('/admin/data'), '/dashboard');
+    test('replace should match exactly', () {
+      final RegexProxyRule rule = RegexProxyRule(
+        pattern: RegExp(r'/temp1'),
+        target: 'http://legacy.com',
+        replacement: '/temp2/',
+      );
+      expect(rule.replace('/temp1/careful/double/slashes'), '/temp2//careful/double/slashes');
+      expect(
+        rulePrefixRemovalReplacement.replace('/old_pathname/resource/data'),
+        '/new_pathname/resource/data',
+      );
     });
 
-    test('replace should apply full path replacement', () {
-      expect(ruleFullPathReplacement.replace('/some/random/path/image.jpg'), '/static/index.html');
+    test('replace should replace all occurences', () {
+      expect(ruleMiddlePattern.replace('/test_static/test_static/data'), '/assets/assets/data');
     });
 
     test('replace should handle regex with no capturing groups in pattern', () {
@@ -251,11 +249,6 @@ void main() {
     });
 
     test('replace should handle \$0 (entire match)', () {
-      final RegexProxyRule ruleZeroGroup = RegexProxyRule(
-        pattern: RegExp(r'^/prefix/(.*)'),
-        target: 'http://test.com',
-        replacement: '/all\$0',
-      );
       expect(ruleZeroGroup.replace('/prefix/something/else'), '/all/prefix/something/else');
     });
 
@@ -266,7 +259,7 @@ void main() {
     test('toString provides useful debug information', () {
       expect(
         ruleNoReplacement.toString(),
-        '{pattern: ^/users/(\\d+)\$, target: http://example.com, replacement: null}',
+        '{pattern: ^/users/(\\d+)\, target: http://example.com, replacement: null}',
       );
       expect(
         rulePrefixRemovalReplacement.toString(),
@@ -293,7 +286,7 @@ void main() {
       replacement: '',
     );
     final SourceProxyRule ruleSlashReplacement = SourceProxyRule(
-      source: '/remove-me/',
+      source: '/remove-me-too',
       target: 'http://cdn.example.com',
       replacement: '/',
     );
@@ -301,12 +294,16 @@ void main() {
     test('matches should return true for matching source', () {
       expect(ruleNoReplacement.matches('/assets/image.png'), isTrue);
       expect(ruleWithReplacement.matches('/old-assets/script.js'), isTrue);
+      expect(ruleEmptyReplacement.matches('/remove-me/now'), isTrue);
+      expect(ruleSlashReplacement.matches('/remove-me-too-please'), isTrue);
+      expect(ruleSlashReplacement.matches('/remove-me-too/please'), isTrue);
     });
 
     test('matches should return false for non-matching source', () {
-      expect(ruleNoReplacement.matches('/data/image.png'), isFalse);
-      expect(ruleWithReplacement.matches('/assets/script.js'), isFalse);
+      expect(ruleNoReplacement.matches('/data/assets/image.png'), isFalse);
+      expect(ruleWithReplacement.matches('/old/assets/script.js'), isFalse);
       expect(ruleWithReplacement.matches('/old-assets-prefix/script.js'), isFalse);
+      expect(ruleSlashReplacement.matches('remove-me-too/please'), isFalse);
     });
 
     test('replace should return original path if no replacement string', () {
@@ -324,8 +321,15 @@ void main() {
     });
 
     test('replace should handle slash replacement string', () {
-      expect(ruleSlashReplacement.replace('/remove-me/file.txt'), '/file.txt');
-      expect(ruleSlashReplacement.replace('/remove-me/'), '/');
+      expect(ruleSlashReplacement.replace('/remove-me-too'), '/');
+    });
+
+    test('replace should only replace first occurence', () {
+      expect(
+        ruleWithReplacement.replace('/old-assets/old-assets/style.css'),
+        '/new-assets/old-assets/style.css',
+      );
+      expect(ruleSlashReplacement.replace('/remove-me-too/remove-me-too/'), '//remove-me-too/');
     });
 
     test('replace should return original path for non-matching source', () {
