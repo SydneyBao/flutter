@@ -190,7 +190,7 @@ Future<DevConfig> loadDevConfig({
       globals.printError('Error: Failed to parse $devConfigFilePath: ${e.message} ${e.span}');
       rethrow;
     } on Exception catch (e) {
-      globals.printError('An unexpected error occurred while reading devconfig.yaml: $e');
+      globals.printError('An unexpected error occurred while reading $devConfigFilePath: $e');
       globals.printStatus(
         'Reverting to default flutter_tools web server configuration due to unexpected error.',
       );
