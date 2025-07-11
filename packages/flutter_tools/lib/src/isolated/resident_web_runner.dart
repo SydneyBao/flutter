@@ -41,8 +41,6 @@ import '../web/file_generators/flutter_service_worker_js.dart';
 import '../web/file_generators/main_dart.dart' as main_dart;
 import '../web/web_device.dart';
 import '../web/web_runner.dart';
-
-import 'devfs_config.dart';
 import 'devfs_web.dart';
 import 'web_expression_compiler.dart';
 
@@ -265,7 +263,7 @@ class ResidentWebRunner extends ResidentRunner {
       _logger.printStatus('This application is not configured to build on the web.');
       _logger.printStatus('To add web support to a project, run `flutter create .`.');
     }
-    final String modeName = debuggingOptions.buildInfo.friendlyModeName;
+    final String modeName = debuggingOptions.buildInfo.mode.friendlyName;
     _logger.printStatus(
       'Launching ${getDisplayPath(target, _fileSystem)} '
       'on ${device!.device!.displayName} in $modeName mode...',
@@ -276,24 +274,59 @@ class ResidentWebRunner extends ResidentRunner {
 
     try {
       return await asyncGuard(() async {
-        final DevConfig originalDevConfig = debuggingOptions.devConfig ?? const DevConfig();
+        Future<int> getPort() async {
+          if (debuggingOptions.port == null) {
+            return globals.os.findFreePort();
+          }
 
-        final int resolvedPort = await resolvePort(originalDevConfig.port);
+          final int? port = int.tryParse(debuggingOptions.port ?? '');
 
-        final DevConfig updatedDevConfig = DevConfig(
-          host: originalDevConfig.host,
-          port: resolvedPort,
-          headers: originalDevConfig.headers,
-          https: originalDevConfig.https,
-          proxy: originalDevConfig.proxy,
-        );
+          if (port == null) {
+            logger.printError('''
+Received a non-integer value for port: ${debuggingOptions.port}
+A randomly-chosen available port will be used instead.
+''');
+            return globals.os.findFreePort();
+          }
+
+          if (port < 0 || port > 65535) {
+            throwToolExit('''
+Invalid port: ${debuggingOptions.port}
+Please provide a valid TCP port (an integer between 0 and 65535, inclusive).
+    ''');
+          }
+
+          return port;
+        }
+
         final ExpressionCompiler? expressionCompiler =
             debuggingOptions.webEnableExpressionEvaluation
                 ? WebExpressionCompiler(device!.generator!, fileSystem: _fileSystem)
                 : null;
 
+        // Retrieve connected web devices, excluding the web server device.
+        final List<Device>? devices = await globals.deviceManager?.getAllDevices();
+        final Set<String> nonWebServerConnectedDeviceIds = <String>{
+          for (final Device d in devices!.where(
+            (Device d) =>
+                d.platformType == PlatformType.web &&
+                d.isConnected &&
+                d.id != WebServerDevice.kWebServerDeviceId,
+          ))
+            d.id,
+        };
+
+        // Use Chrome-based connection only if we have a connected ChromiumDevice
+        // Otherwise, use DWDS WebSocket connection
+        final bool useDwdsWebSocketConnection =
+            !(_chromiumLauncher != null &&
+                nonWebServerConnectedDeviceIds.contains(device!.device!.id));
+
         device!.devFS = WebDevFS(
-          devConfig: updatedDevConfig,
+          hostname: debuggingOptions.hostname ?? 'localhost',
+          port: await getPort(),
+          tlsCertPath: debuggingOptions.tlsCertPath,
+          tlsCertKeyPath: debuggingOptions.tlsCertKeyPath,
           packagesFilePath: packagesFilePath,
           urlTunneller: _urlTunneller,
           useSseForDebugProxy: debuggingOptions.webUseSseForDebugProxy,
@@ -304,6 +337,7 @@ class ResidentWebRunner extends ResidentRunner {
           enableDds: debuggingOptions.enableDds,
           entrypoint: _fileSystem.file(target).uri,
           expressionCompiler: expressionCompiler,
+          extraHeaders: debuggingOptions.webHeaders,
           chromiumLauncher: _chromiumLauncher,
           nativeNullAssertions: debuggingOptions.nativeNullAssertions,
           ddcModuleSystem: debuggingOptions.buildInfo.ddcModuleFormat == DdcModuleFormat.ddc,
@@ -312,11 +346,13 @@ class ResidentWebRunner extends ResidentRunner {
           isWasm: debuggingOptions.webUseWasm,
           useLocalCanvasKit: debuggingOptions.buildInfo.useLocalCanvasKit,
           rootDirectory: fileSystem.directory(projectRootPath),
-          isWindows: _platform.isWindows,
+          useDwdsWebSocketConnection: useDwdsWebSocketConnection,
+          fileSystem: fileSystem,
+          logger: logger,
+          platform: _platform,
         );
         Uri url = await device!.devFS!.create();
-        if (debuggingOptions.devConfig!.https?.certKeyPath != null &&
-            debuggingOptions.devConfig!.https?.certPath != null) {
+        if (debuggingOptions.tlsCertKeyPath != null && debuggingOptions.tlsCertPath != null) {
           url = url.replace(scheme: 'https');
         }
         if (debuggingOptions.buildInfo.isDebug && !debuggingOptions.webUseWasm) {
@@ -346,6 +382,13 @@ class ResidentWebRunner extends ResidentRunner {
             compilerConfigs: <WebCompilerConfig>[_compilerConfig],
           );
         }
+        final WebDevFS webDevFS = device!.devFS! as WebDevFS;
+        final bool useDebugExtension =
+            device!.device is WebServerDevice && debuggingOptions.startPaused;
+        // Listen for connected apps early and then await this `Future` later
+        // when we attach.
+        final Future<ConnectionResult?>? connectDebug =
+            supportsServiceProtocol ? webDevFS.connect(useDebugExtension) : null;
         await device!.device!.startApp(
           package,
           mainPath: target,
@@ -355,6 +398,7 @@ class ResidentWebRunner extends ResidentRunner {
         return attach(
           connectionInfoCompleter: connectionInfoCompleter,
           appStartedCompleter: appStartedCompleter,
+          connectDebug: connectDebug,
         );
       });
     } on WebSocketException catch (error, stackTrace) {
@@ -741,6 +785,7 @@ class ResidentWebRunner extends ResidentRunner {
   Future<int> attach({
     Completer<DebugConnectionInfo>? connectionInfoCompleter,
     Completer<void>? appStartedCompleter,
+    Future<ConnectionResult?>? connectDebug,
     bool allowExistingDdsInstance = false,
     bool needsFullRestart = true,
   }) async {
@@ -765,10 +810,8 @@ class ResidentWebRunner extends ResidentRunner {
     }
     Uri? websocketUri;
     if (supportsServiceProtocol) {
-      final WebDevFS webDevFS = device!.devFS! as WebDevFS;
-      final bool useDebugExtension =
-          device!.device is WebServerDevice && debuggingOptions.startPaused;
-      _connectionResult = await webDevFS.connect(useDebugExtension);
+      assert(connectDebug != null);
+      _connectionResult = await connectDebug;
       unawaited(_connectionResult!.debugConnection!.onDone.whenComplete(_cleanupAndExit));
 
       void onLogEvent(vmservice.Event event) {

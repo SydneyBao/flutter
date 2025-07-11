@@ -1,10 +1,19 @@
+// Copyright 2014 The Flutter Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
 import 'dart:async';
+
 import 'package:dwds/dwds.dart';
 
 import '../base/file_system.dart';
+
 import '../compile.dart';
 import '../convert.dart';
 
+/// An expression compiler connecting to FrontendServer.
+///
+/// This is only used in development mode.
 class WebExpressionCompiler implements ExpressionCompiler {
   WebExpressionCompiler(this._generator, {required FileSystem fileSystem})
     : _fileSystem = fileSystem;

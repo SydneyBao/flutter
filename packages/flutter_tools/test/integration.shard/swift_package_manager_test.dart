@@ -45,7 +45,6 @@ void main() {
           final String appDirectoryPath = await SwiftPackageManagerUtils.createApp(
             flutterBin,
             workingDirectoryPath,
-            iosLanguage: iosLanguage,
             platform: platformName,
             usesSwiftPackageManager: true,
             options: <String>['--platforms=$platformName'],
@@ -139,14 +138,12 @@ void main() {
               "\n  s.dependency '${integrationTestPlugin.pluginName}'\n\nend",
             ),
           );
-          final String pluginClassFileName =
-              iosLanguage == 'swift'
-                  ? '${createdSwiftPMPlugin.className}.swift'
-                  : '${createdSwiftPMPlugin.className}.m';
-          final String pluginClassFileImport =
-              iosLanguage == 'swift'
-                  ? 'import ${integrationTestPlugin.pluginName}'
-                  : '@import ${integrationTestPlugin.pluginName};';
+          final String pluginClassFileName = iosLanguage == 'swift'
+              ? '${createdSwiftPMPlugin.className}.swift'
+              : '${createdSwiftPMPlugin.className}.m';
+          final String pluginClassFileImport = iosLanguage == 'swift'
+              ? 'import ${integrationTestPlugin.pluginName}'
+              : '@import ${integrationTestPlugin.pluginName};';
           final File pluginClassFile = fileSystem
               .directory(createdSwiftPMPlugin.pluginPath)
               .childDirectory(platformName)
@@ -318,7 +315,6 @@ void main() {
       final String appDirectoryPath = await SwiftPackageManagerUtils.createApp(
         flutterBin,
         workingDirectoryPath,
-        iosLanguage: 'swift',
         platform: platformName,
         usesSwiftPackageManager: true,
         options: <String>['--platforms=$platformName'],
@@ -395,7 +391,6 @@ void main() {
         final String appDirectoryPath = await SwiftPackageManagerUtils.createApp(
           flutterBin,
           workingDirectoryPath,
-          iosLanguage: 'swift',
           platform: platformName,
           usesSwiftPackageManager: true,
           options: <String>['--platforms=$platformName'],
@@ -454,7 +449,6 @@ void main() {
     final String appDirectoryPath = await SwiftPackageManagerUtils.createApp(
       flutterBin,
       workingDirectoryPath,
-      iosLanguage: 'swift',
       platform: 'ios',
       usesSwiftPackageManager: true,
       options: <String>['--template=module'],
@@ -546,7 +540,6 @@ void main() {
     final String appDirectoryPath = await SwiftPackageManagerUtils.createApp(
       flutterBin,
       workingDirectoryPath,
-      iosLanguage: 'swift',
       platform: 'ios',
       usesSwiftPackageManager: true,
       options: <String>[],
@@ -630,7 +623,6 @@ void main() {
     final String appDirectoryPath = await SwiftPackageManagerUtils.createApp(
       flutterBin,
       workingDirectoryPath,
-      iosLanguage: 'swift',
       platform: 'ios',
       usesSwiftPackageManager: true,
       options: <String>['--platforms=ios'],
@@ -695,7 +687,6 @@ void main() {
     final String appDirectoryPath = await SwiftPackageManagerUtils.createApp(
       flutterBin,
       workingDirectoryPath,
-      iosLanguage: 'swift',
       platform: 'macos',
       usesSwiftPackageManager: true,
       options: <String>['--platforms=macos'],
@@ -762,7 +753,6 @@ void main() {
     final String appDirectoryPath = await SwiftPackageManagerUtils.createApp(
       flutterBin,
       workingDirectoryPath,
-      iosLanguage: 'swift',
       platform: 'ios',
       usesSwiftPackageManager: true,
       options: <String>['--platforms=ios'],
@@ -843,7 +833,6 @@ void main() {
     final String appDirectoryPath = await SwiftPackageManagerUtils.createApp(
       flutterBin,
       workingDirectoryPath,
-      iosLanguage: 'swift',
       platform: 'ios',
       usesSwiftPackageManager: true,
       options: <String>['--platforms=ios'],

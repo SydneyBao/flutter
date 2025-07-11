@@ -1,3 +1,7 @@
+// Copyright 2014 The Flutter Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
 import 'dart:async';
 import 'dart:typed_data';
 
@@ -14,11 +18,12 @@ import '../artifacts.dart';
 import '../base/common.dart';
 import '../base/file_system.dart';
 import '../base/io.dart';
+import '../base/logger.dart';
 import '../base/net.dart';
+import '../base/platform.dart';
 import '../build_info.dart';
 import '../cache.dart';
 import '../convert.dart';
-import '../device.dart';
 import '../globals.dart' as globals;
 import '../web/bootstrap.dart';
 import '../web/chrome.dart';
@@ -27,27 +32,22 @@ import '../web/memory_fs.dart';
 import '../web/module_metadata.dart';
 import '../web_template.dart';
 
-import 'devfs_config.dart';
-import 'devfs_proxy.dart';
 import 'release_asset_server.dart';
 import 'web_server_utlities.dart';
 
-@visibleForTesting
-void log(logging.LogRecord event) {
-  final String error = event.error == null ? '' : 'Error: ${event.error}';
-  if (event.level >= logging.Level.SEVERE) {
-    globals.printError('${event.loggerName}: ${event.message}$error', stackTrace: event.stackTrace);
-  } else if (event.level == logging.Level.WARNING) {
-    // Temporary fix for https://github.com/flutter/flutter/issues/109792
-    // TODO(annagrin): Remove the condition after the bogus warning is
-    // removed in dwds: https://github.com/dart-lang/webdev/issues/1722
-    if (!event.message.contains('No module for')) {
-      globals.printWarning('${event.loggerName}: ${event.message}$error');
-    }
-  } else {
-    globals.printTrace('${event.loggerName}: ${event.message}$error');
-  }
-}
+// A minimal index for projects that do not yet support web. A meta tag is used
+// to ensure loaded scripts are always parsed as UTF-8.
+const String _kDefaultIndex = '''
+<html>
+    <head>
+        <meta charset='utf-8'>
+        <base href="/">
+    </head>
+    <body>
+        <script src="main.dart.js"></script>
+    </body>
+</html>
+''';
 
 typedef DwdsLauncher =
     Future<Dwds> Function({
@@ -55,9 +55,14 @@ typedef DwdsLauncher =
       required Stream<BuildResult> buildResults,
       required ConnectionProvider chromeConnection,
       required ToolConfiguration toolConfiguration,
-      bool injectDebuggingSupportCode,
+      bool useDwdsWebSocketConnection,
     });
 
+const String kLuciEnvName = 'LUCI_CONTEXT';
+
+/// A web server which handles serving JavaScript and assets.
+///
+/// This is only used in development mode.
 class WebAssetServer implements AssetReader {
   @visibleForTesting
   WebAssetServer(
@@ -70,7 +75,8 @@ class WebAssetServer implements AssetReader {
     this._canaryFeatures, {
     required this.webRenderer,
     required this.useLocalCanvasKit,
-  }) : basePath = WebTemplate.baseHref(htmlTemplate('index.html', kDefaultIndex)) {
+    required this.fileSystem,
+  }) : basePath = WebTemplate.baseHref(htmlTemplate(fileSystem, 'index.html', _kDefaultIndex)) {
     // TODO(srujzs): Remove this assertion when the library bundle format is
     // supported without canary mode.
     if (_ddcModuleSystem) {
@@ -115,10 +121,9 @@ class WebAssetServer implements AssetReader {
       _digests[name] = _webMemoryFS.files[moduleName].hashCode.toString();
     }
     if (writeRestartScripts) {
-      final List<Map<String, String>> srcIdsList = <Map<String, String>>[];
-      for (final String src in modules) {
-        srcIdsList.add(<String, String>{'src': src, 'id': src});
-      }
+      final List<Map<String, String>> srcIdsList = <Map<String, String>>[
+        for (final String src in modules) <String, String>{'src': src, 'id': src},
+      ];
       writeFile('restart_scripts.json', json.encode(srcIdsList));
     }
   }
@@ -126,11 +131,12 @@ class WebAssetServer implements AssetReader {
   static const String _reloadScriptsFileName = 'reload_scripts.json';
 
   /// Given a list of [modules] that need to be reloaded, writes a file that
-  /// contains a list of objects each with two fields:
+  /// contains a list of objects each with three fields:
   ///
   /// `src`: A string that corresponds to the file path containing a DDC library
   /// bundle. To support embedded libraries, the path should include the
   /// `baseUri` of the web server.
+  /// `module`: The name of the library bundle in `src`.
   /// `libraries`: An array of strings containing the libraries that were
   /// compiled in `src`.
   ///
@@ -139,6 +145,7 @@ class WebAssetServer implements AssetReader {
   /// [
   ///   {
   ///     "src": "<baseUri>/<file_name>",
+  ///     "module": "<module_name>",
   ///     "libraries": ["<lib1>", "<lib2>"],
   ///   },
   /// ]
@@ -155,7 +162,11 @@ class WebAssetServer implements AssetReader {
       );
       final List<String> libraries = metadata.libraries.keys.toList();
       final String moduleUri = baseUri != null ? '$baseUri/$module' : module;
-      moduleToLibrary.add(<String, Object>{'src': moduleUri, 'libraries': libraries});
+      moduleToLibrary.add(<String, Object>{
+        'src': moduleUri,
+        'module': metadata.name,
+        'libraries': libraries,
+      });
     }
     writeFile(_reloadScriptsFileName, json.encode(moduleToLibrary));
   }
@@ -168,7 +179,7 @@ class WebAssetServer implements AssetReader {
   Uri? get baseUri => _baseUri;
   Uri? _baseUri;
 
-  /// Start the web asset server on [devConfig] host and port if not null.
+  /// Start the web asset server on a [hostname] and [port].
   ///
   /// If [testMode] is true, do not actually initialize dwds or the shelf static
   /// server.
@@ -177,6 +188,10 @@ class WebAssetServer implements AssetReader {
   /// trace.
   static Future<WebAssetServer> start(
     ChromiumLauncher? chromiumLauncher,
+    String hostname,
+    int port,
+    String? tlsCertPath,
+    String? tlsCertKeyPath,
     UrlTunneller? urlTunneller,
     bool useSseForDebugProxy,
     bool useSseForDebugBackend,
@@ -185,8 +200,8 @@ class WebAssetServer implements AssetReader {
     bool enableDwds,
     bool enableDds,
     Uri entrypoint,
-    ExpressionCompiler? expressionCompiler, {
-    required DevConfig devConfig,
+    ExpressionCompiler? expressionCompiler,
+    Map<String, String> extraHeaders, {
     required WebRendererMode webRenderer,
     required bool isWasm,
     required bool useLocalCanvasKit,
@@ -195,56 +210,50 @@ class WebAssetServer implements AssetReader {
     // TODO(markzipan): Make sure this default value aligns with that in the debugger options.
     bool ddcModuleSystem = false,
     bool canaryFeatures = false,
+    bool useDwdsWebSocketConnection = false,
+    required FileSystem fileSystem,
+    required Logger logger,
+    required Platform platform,
+    bool shouldEnableMiddleware = true,
   }) async {
     // TODO(srujzs): Remove this assertion when the library bundle format is
     // supported without canary mode.
-
-    final String effectiveHost = devConfig.host ?? 'localhost';
-    final int effectivePort = devConfig.port ?? 0;
-    final String? effectiveCertPath = devConfig.https?.certPath;
-    final String? effectiveCertKeyPath = devConfig.https?.certKeyPath;
-    final Map<String, String> effectiveHeaders = devConfig.headers;
-    final List<ProxyRule> effectiveProxy = devConfig.proxy;
-
-    HttpServer? httpServer;
-    const int kMaxRetries = 4;
-
     if (ddcModuleSystem) {
       assert(canaryFeatures);
     }
     InternetAddress address;
-    if (effectiveHost == 'any') {
+    if (hostname == 'any') {
       address = InternetAddress.anyIPv4;
     } else {
-      address = (await InternetAddress.lookup(effectiveHost)).first;
+      address = (await InternetAddress.lookup(hostname)).first;
     }
-
+    HttpServer? httpServer;
+    const int kMaxRetries = 4;
     for (int i = 0; i <= kMaxRetries; i++) {
       try {
-        if (effectiveCertPath != null && effectiveCertKeyPath != null) {
-          final SecurityContext serverContext = SecurityContext();
-          try {
-            serverContext.useCertificateChain(globals.fs.file(effectiveCertPath).absolute.path);
-            serverContext.usePrivateKey(globals.fs.file(effectiveCertKeyPath).absolute.path);
-            httpServer = await HttpServer.bindSecure(address, effectivePort, serverContext);
-          } catch (e) {
-            globals.printError('Error loading SSL certificate or key: $e');
-            rethrow;
-          }
+        if (tlsCertPath != null && tlsCertKeyPath != null) {
+          final SecurityContext serverContext =
+              SecurityContext()
+                ..useCertificateChain(tlsCertPath)
+                ..usePrivateKey(tlsCertKeyPath);
+          httpServer = await HttpServer.bindSecure(address, port, serverContext);
         } else {
-          httpServer = await HttpServer.bind(address, effectivePort);
+          httpServer = await HttpServer.bind(address, port);
         }
         break;
       } on SocketException catch (e, s) {
         if (i >= kMaxRetries) {
-          globals.printError('Failed to bind web development server:\n$e', stackTrace: s);
+          logger.printError('Failed to bind web development server:\n$e', stackTrace: s);
           throwToolExit('Failed to bind web development server:\n$e');
         }
         await Future<void>.delayed(const Duration(milliseconds: 100));
       }
     }
+
+    // Allow rendering in a iframe.
     httpServer!.defaultResponseHeaders.remove('x-frame-options', 'SAMEORIGIN');
-    for (final MapEntry<String, String> header in effectiveHeaders.entries) {
+
+    for (final MapEntry<String, String> header in extraHeaders.entries) {
       httpServer.defaultResponseHeaders.add(header.key, header.value);
     }
 
@@ -261,14 +270,15 @@ class WebAssetServer implements AssetReader {
       canaryFeatures,
       webRenderer: webRenderer,
       useLocalCanvasKit: useLocalCanvasKit,
+      fileSystem: fileSystem,
     );
-    final int selectedPort = httpServer.port;
-    String url = '$effectiveHost:$selectedPort';
-    if (effectiveHost == 'any') {
+    final int selectedPort = server.selectedPort;
+    String url = '$hostname:$selectedPort';
+    if (hostname == 'any') {
       url = 'localhost:$selectedPort';
     }
     server._baseUri = Uri.http(url, server.basePath);
-    if (effectiveCertPath != null && effectiveCertKeyPath != null) {
+    if (tlsCertPath != null && tlsCertKeyPath != null) {
       server._baseUri = Uri.https(url, server.basePath);
     }
     if (testMode) {
@@ -279,8 +289,8 @@ class WebAssetServer implements AssetReader {
     if (buildInfo.mode != BuildMode.debug || isWasm) {
       final ReleaseAssetServer releaseAssetServer = ReleaseAssetServer(
         entrypoint,
-        fileSystem: globals.fs,
-        platform: globals.platform,
+        fileSystem: fileSystem,
+        platform: platform,
         flutterRoot: Cache.flutterRoot,
         webBuildDirectory: getWebBuildDirectory(),
         basePath: server.basePath,
@@ -291,7 +301,7 @@ class WebAssetServer implements AssetReader {
           shelf.serveRequests(httpServer!, releaseAssetServer.handle);
         },
         (Object e, StackTrace s) {
-          globals.printTrace('Release asset server: error serving requests: $e:$s');
+          logger.printTrace('Release asset server: error serving requests: $e:$s');
         },
       );
       return server;
@@ -303,12 +313,12 @@ class WebAssetServer implements AssetReader {
 
     // Ensure dwds is present and provide middleware to avoid trying to
     // load the through the isolate APIs.
-    final Directory directory = await loadDwdsDirectory(globals.fs, globals.logger);
+    final Directory directory = await loadDwdsDirectory(fileSystem, logger);
     shelf.Handler middleware(FutureOr<shelf.Response> Function(shelf.Request) innerHandler) {
       return (shelf.Request request) async {
         if (request.url.path.endsWith('dwds/src/injected/client.js')) {
           final Uri uri = directory.uri.resolve('src/injected/client.js');
-          final String result = await globals.fs.file(uri.toFilePath()).readAsString();
+          final String result = await fileSystem.file(uri.toFilePath()).readAsString();
           return shelf.Response.ok(
             result,
             headers: <String, String>{HttpHeaders.contentTypeHeader: 'application/javascript'},
@@ -319,16 +329,7 @@ class WebAssetServer implements AssetReader {
     }
 
     logging.Logger.root.level = logging.Level.ALL;
-    logging.Logger.root.onRecord.listen(log);
-
-    // Retrieve connected web devices.
-    final List<Device>? devices = await globals.deviceManager?.getAllDevices();
-    final Set<String> connectedWebDeviceIds =
-        devices
-            ?.where((Device d) => d.platformType == PlatformType.web && d.isConnected)
-            .map((Device d) => d.id)
-            .toSet() ??
-        <String>{};
+    logging.Logger.root.onRecord.listen((logging.LogRecord event) => log(logger, event));
 
     // In debug builds, spin up DWDS and the full asset server.
     final Dwds dwds = await dwdsLauncher(
@@ -348,7 +349,7 @@ class WebAssetServer implements AssetReader {
                   digestProvider,
                   BuildSettings(
                     appEntrypoint: packageConfig.toPackageUri(
-                      globals.fs.file(entrypoint).absolute.uri,
+                      fileSystem.file(entrypoint).absolute.uri,
                     ),
                   ),
                   packageConfigPath: buildInfo.packageConfigPath,
@@ -364,7 +365,7 @@ class WebAssetServer implements AssetReader {
                   digestProvider,
                   BuildSettings(
                     appEntrypoint: packageConfig.toPackageUri(
-                      globals.fs.file(entrypoint).absolute.uri,
+                      fileSystem.file(entrypoint).absolute.uri,
                     ),
                   ),
                   packageConfigPath: buildInfo.packageConfigPath,
@@ -378,22 +379,15 @@ class WebAssetServer implements AssetReader {
           expressionCompiler: expressionCompiler,
           spawnDds: enableDds,
         ),
-        appMetadata: AppMetadata(hostname: effectiveHost),
+        appMetadata: AppMetadata(hostname: hostname),
       ),
-      // Inject the debugging support code if connected web devices are present,
-      // and user specified a device id that matches a connected web device.
-      // If the user did not specify a device id, we use chrome as the default.
-      injectDebuggingSupportCode:
-          connectedWebDeviceIds.isNotEmpty &&
-          connectedWebDeviceIds.contains(globals.deviceManager?.specifiedDeviceId ?? 'chrome'),
+      // Use DWDS WebSocket-based connection instead of Chrome-based connection for debugging
+      useDwdsWebSocketConnection: useDwdsWebSocketConnection,
     );
-
     shelf.Pipeline pipeline = const shelf.Pipeline();
-    if (enableDwds) {
-      pipeline = pipeline.addMiddleware(middleware);
-      pipeline = pipeline.addMiddleware(dwds.middleware);
+    if (shouldEnableMiddleware) {
+      pipeline = pipeline.addMiddleware(middleware).addMiddleware(dwds.middleware);
     }
-    pipeline = pipeline.addMiddleware(proxyMiddleware(effectiveProxy));
     final shelf.Handler dwdsHandler = pipeline.addHandler(server.handleRequest);
     final shelf.Cascade cascade = shelf.Cascade().add(dwds.handler).add(dwdsHandler);
     runZonedGuarded(
@@ -401,7 +395,7 @@ class WebAssetServer implements AssetReader {
         shelf.serveRequests(httpServer!, cascade.handler);
       },
       (Object e, StackTrace s) {
-        globals.printTrace('Dwds server: error serving requests: $e:$s');
+        logger.printTrace('Dwds server: error serving requests: $e:$s');
       },
     );
     server.dwds = dwds;
@@ -514,8 +508,8 @@ class WebAssetServer implements AssetReader {
     File file = _resolveDartFile(requestPath);
 
     if (!file.existsSync() && requestPath.startsWith('canvaskit/')) {
-      final Directory canvasKitDirectory = globals.fs.directory(
-        globals.fs.path.join(
+      final Directory canvasKitDirectory = fileSystem.directory(
+        fileSystem.path.join(
           globals.artifacts!.getHostArtifact(HostArtifact.flutterWebSdk).path,
           'canvaskit',
         ),
@@ -523,25 +517,25 @@ class WebAssetServer implements AssetReader {
       final Uri potential = canvasKitDirectory.uri.resolve(
         requestPath.replaceFirst('canvaskit/', ''),
       );
-      file = globals.fs.file(potential);
+      file = fileSystem.file(potential);
     }
 
     // If all of the lookups above failed, the file might have been an asset.
     // Try and resolve the path relative to the built asset directory.
     if (!file.existsSync()) {
-      final Uri potential = globals.fs
+      final Uri potential = fileSystem
           .directory(getAssetBuildDirectory())
           .uri
           .resolve(requestPath.replaceFirst('assets/', ''));
-      file = globals.fs.file(potential);
+      file = fileSystem.file(potential);
     }
 
     if (!file.existsSync()) {
-      final Uri webPath = globals.fs.currentDirectory
+      final Uri webPath = fileSystem.currentDirectory
           .childDirectory('web')
           .uri
           .resolve(requestPath);
-      file = globals.fs.file(webPath);
+      file = fileSystem.file(webPath);
     }
 
     if (!file.existsSync()) {
@@ -600,11 +594,13 @@ class WebAssetServer implements AssetReader {
 
   final bool useLocalCanvasKit;
 
+  final FileSystem fileSystem;
+
   String get _buildConfigString {
-    final Map<String, dynamic> buildConfig = <String, dynamic>{
+    final Map<String, Object> buildConfig = <String, Object>{
       'engineRevision': globals.flutterVersion.engineRevision,
-      'builds': <dynamic>[
-        <String, dynamic>{
+      'builds': <Object>[
+        <String, Object>{
           'compileTarget': 'dartdevc',
           'renderer': webRenderer.name,
           'mainJsPath': 'main.dart.js',
@@ -620,8 +616,8 @@ _flutter.buildConfig = ${jsonEncode(buildConfig)};
 ''';
   }
 
-  File get _flutterJsFile => globals.fs.file(
-    globals.fs.path.join(
+  File get _flutterJsFile => fileSystem.file(
+    fileSystem.path.join(
       globals.artifacts!.getHostArtifact(HostArtifact.flutterJsDirectory).path,
       'flutter.js',
     ),
@@ -629,6 +625,7 @@ _flutter.buildConfig = ${jsonEncode(buildConfig)};
 
   String get _flutterBootstrapJsContent {
     final WebTemplate bootstrapTemplate = getWebTemplate(
+      fileSystem,
       'flutter_bootstrap.js',
       generateDefaultFlutterBootstrapScript(includeServiceWorkerSettings: false),
     );
@@ -648,7 +645,7 @@ _flutter.buildConfig = ${jsonEncode(buildConfig)};
   }
 
   shelf.Response _serveIndexHtml() {
-    final WebTemplate indexHtml = getWebTemplate('index.html', kDefaultIndex);
+    final WebTemplate indexHtml = getWebTemplate(fileSystem, 'index.html', _kDefaultIndex);
     return shelf.Response.ok(
       indexHtml.withSubstitutions(
         // Currently, we don't support --base-href for the "run" command.
@@ -679,7 +676,7 @@ _flutter.buildConfig = ${jsonEncode(buildConfig)};
     // If this is a dart file, it must be on the local file system and is
     // likely coming from a source map request. The tool doesn't currently
     // consider the case of Dart files as assets.
-    final File dartFile = globals.fs.file(globals.fs.currentDirectory.uri.resolve(path));
+    final File dartFile = fileSystem.file(fileSystem.currentDirectory.uri.resolve(path));
     if (dartFile.existsSync()) {
       return dartFile;
     }
@@ -696,7 +693,7 @@ _flutter.buildConfig = ${jsonEncode(buildConfig)};
         Uri(scheme: 'package', pathSegments: segments.skip(1)),
       );
       if (filePath != null) {
-        final File packageFile = globals.fs.file(filePath);
+        final File packageFile = fileSystem.file(filePath);
         if (packageFile.existsSync()) {
           return packageFile;
         }
@@ -705,7 +702,7 @@ _flutter.buildConfig = ${jsonEncode(buildConfig)};
 
     // Otherwise it must be a Dart SDK source or a Flutter Web SDK source.
     final Directory dartSdkParent =
-        globals.fs
+        fileSystem
             .directory(
               globals.artifacts!.getArtifactPath(
                 Artifact.engineDartSdkPath,
@@ -713,15 +710,15 @@ _flutter.buildConfig = ${jsonEncode(buildConfig)};
               ),
             )
             .parent;
-    final File dartSdkFile = globals.fs.file(dartSdkParent.uri.resolve(path));
+    final File dartSdkFile = fileSystem.file(dartSdkParent.uri.resolve(path));
     if (dartSdkFile.existsSync()) {
       return dartSdkFile;
     }
 
-    final Directory flutterWebSdk = globals.fs.directory(
+    final Directory flutterWebSdk = fileSystem.directory(
       globals.artifacts!.getHostArtifact(HostArtifact.flutterWebSdk),
     );
-    final File webSdkFile = globals.fs.file(flutterWebSdk.uri.resolve(path));
+    final File webSdkFile = fileSystem.file(flutterWebSdk.uri.resolve(path));
 
     return webSdkFile;
   }
@@ -729,13 +726,13 @@ _flutter.buildConfig = ${jsonEncode(buildConfig)};
   File get _resolveDartSdkJsFile {
     final Map<WebRendererMode, HostArtifact> dartSdkArtifactMap =
         _ddcModuleSystem ? kDdcLibraryBundleDartSdkJsArtifactMap : kAmdDartSdkJsArtifactMap;
-    return globals.fs.file(globals.artifacts!.getHostArtifact(dartSdkArtifactMap[webRenderer]!));
+    return fileSystem.file(globals.artifacts!.getHostArtifact(dartSdkArtifactMap[webRenderer]!));
   }
 
   File get _resolveDartSdkJsMapFile {
     final Map<WebRendererMode, HostArtifact> dartSdkArtifactMap =
         _ddcModuleSystem ? kDdcLibraryBundleDartSdkJsMapArtifactMap : kAmdDartSdkJsMapArtifactMap;
-    return globals.fs.file(globals.artifacts!.getHostArtifact(dartSdkArtifactMap[webRenderer]!));
+    return fileSystem.file(globals.artifacts!.getHostArtifact(dartSdkArtifactMap[webRenderer]!));
   }
 
   @override

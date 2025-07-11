@@ -51,21 +51,18 @@ class SwiftPackageManagerUtils {
     String flutterBin,
     String workingDirectory, {
     required String platform,
-    required String iosLanguage,
     required List<String> options,
     bool usesSwiftPackageManager = false,
   }) async {
     final String appTemplateType = usesSwiftPackageManager ? 'spm' : 'default';
 
-    final String appName = '${platform}_${iosLanguage}_${appTemplateType}_app';
+    final String appName = '${platform}_${appTemplateType}_app';
     final ProcessResult result = await processManager.run(<String>[
       flutterBin,
       ...getLocalEngineArguments(),
       'create',
       '--org',
       'io.flutter.devicelab',
-      '-i',
-      iosLanguage,
       ...options,
       appName,
     ], workingDirectory: workingDirectory);
@@ -266,15 +263,14 @@ class SwiftPackageManagerUtils {
     return SwiftPackageManagerPlugin(
       platform: platform,
       pluginName: (platform == 'ios') ? 'integration_test' : 'integration_test_macos',
-      pluginPath:
-          (platform == 'ios')
-              ? fileSystem.path.join(flutterRoot, 'packages', 'integration_test')
-              : fileSystem.path.join(
-                flutterRoot,
-                'packages',
-                'integration_test',
-                'integration_test_macos',
-              ),
+      pluginPath: (platform == 'ios')
+          ? fileSystem.path.join(flutterRoot, 'packages', 'integration_test')
+          : fileSystem.path.join(
+              flutterRoot,
+              'packages',
+              'integration_test',
+              'integration_test_macos',
+            ),
       className: 'IntegrationTestPlugin',
     );
   }

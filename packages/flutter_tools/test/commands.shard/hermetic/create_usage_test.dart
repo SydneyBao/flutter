@@ -227,7 +227,7 @@ void main() {
         final CreateCommand command = CreateCommand();
         final CommandRunner<void> runner = createTestCommandRunner(command);
 
-        await runner.run(<String>['create', '--no-pub', '--template=app', 'testy']);
+        await runner.run(<String>['create', '--no-pub', '--template=plugin', 'testy']);
         expect(
           (await command.unifiedAnalyticsUsageValues('create')).eventData['createIosLanguage'],
           'swift',
@@ -236,7 +236,7 @@ void main() {
         await runner.run(<String>[
           'create',
           '--no-pub',
-          '--template=app',
+          '--template=plugin',
           '--ios-language=objc',
           'testy',
         ]);
@@ -302,11 +302,10 @@ void main() {
         );
       },
       overrides: <Type, Generator>{
-        FeatureFlags:
-            () => TestFeatureFlags(
-              isNativeAssetsEnabled:
-                  false, // ignore: avoid_redundant_argument_values, If we graduate the feature to true by default, don't break this test.
-            ),
+        FeatureFlags: () => TestFeatureFlags(
+          isNativeAssetsEnabled:
+              false, // ignore: avoid_redundant_argument_values, If we graduate the feature to true by default, don't break this test.
+        ),
       },
     );
   });

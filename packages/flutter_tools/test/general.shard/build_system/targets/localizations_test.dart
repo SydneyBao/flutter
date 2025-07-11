@@ -24,16 +24,17 @@ void main() {
       processManager: FakeProcessManager.any(),
     );
 
-    expect(const GenerateLocalizationsTarget().canSkip(environment), true);
+    expect(await const GenerateLocalizationsTarget().canSkip(environment), true);
 
     environment.projectDir.childFile('l10n.yaml').createSync();
 
-    expect(const GenerateLocalizationsTarget().canSkip(environment), false);
+    expect(await const GenerateLocalizationsTarget().canSkip(environment), false);
   });
 
   testWithoutContext('parseLocalizationsOptions handles valid yaml configuration', () async {
     final FileSystem fileSystem = MemoryFileSystem.test();
-    final File configFile = fileSystem.file('l10n.yaml')..writeAsStringSync('''
+    final File configFile = fileSystem.file('l10n.yaml')
+      ..writeAsStringSync('''
 arb-dir: arb
 template-arb-file: example.arb
 output-localization-file: bar
@@ -43,7 +44,6 @@ header-file: header
 header: HEADER
 use-deferred-loading: true
 preferred-supported-locales: en_US
-synthetic-package: false
 required-resource-attributes: false
 nullable-getter: false
 ''');
@@ -68,11 +68,73 @@ nullable-getter: false
     expect(options.nullableGetter, false);
   });
 
+  testWithoutContext('parseLocalizationsOptions refuses synthetic-package: true', () async {
+    final FileSystem fileSystem = MemoryFileSystem.test();
+    final File configFile = fileSystem.file('l10n.yaml')
+      ..writeAsStringSync('''
+arb-dir: arb
+synthetic-package: true
+template-arb-file: example.arb
+output-localization-file: bar
+untranslated-messages-file: untranslated
+output-class: Foo
+header-file: header
+header: HEADER
+use-deferred-loading: true
+preferred-supported-locales: en_US
+required-resource-attributes: false
+nullable-getter: false
+''');
+
+    expect(
+      () => parseLocalizationsOptionsFromYAML(
+        file: configFile,
+        logger: BufferLogger.test(),
+        fileSystem: fileSystem,
+        defaultArbDir: fileSystem.path.join('lib', 'l10n'),
+      ),
+      throwsToolExit(message: 'synthetic-package'),
+    );
+  });
+
+  testWithoutContext('parseLocalizationsOptions warns on synthetic-package: false', () async {
+    final FileSystem fileSystem = MemoryFileSystem.test();
+    final File configFile = fileSystem.file('l10n.yaml')
+      ..writeAsStringSync('''
+arb-dir: arb
+synthetic-package: false
+template-arb-file: example.arb
+output-localization-file: bar
+untranslated-messages-file: untranslated
+output-class: Foo
+header-file: header
+header: HEADER
+use-deferred-loading: true
+preferred-supported-locales: en_US
+required-resource-attributes: false
+nullable-getter: false
+''');
+
+    final BufferLogger logger = BufferLogger.test();
+    expect(
+      () => parseLocalizationsOptionsFromYAML(
+        file: configFile,
+        logger: logger,
+        fileSystem: fileSystem,
+        defaultArbDir: fileSystem.path.join('lib', 'l10n'),
+      ),
+      returnsNormally,
+    );
+
+    expect(logger.warningText, contains('synthetic-package'));
+  });
+
   testWithoutContext(
     'parseLocalizationsOptions handles preferredSupportedLocales as list',
     () async {
       final FileSystem fileSystem = MemoryFileSystem.test();
-      final File configFile = fileSystem.file('l10n.yaml')..writeAsStringSync('''
+      final File configFile = fileSystem.file('l10n.yaml')
+        ..writeAsStringSync('''
 preferred-supported-locales: ['en_US', 'de']
 ''');
 
@@ -91,7 +153,8 @@ preferred-supported-locales: ['en_US', 'de']
     'parseLocalizationsOptions throws exception on invalid yaml configuration',
     () async {
       final FileSystem fileSystem = MemoryFileSystem.test();
-      final File configFile = fileSystem.file('l10n.yaml')..writeAsStringSync('''
+      final File configFile = fileSystem.file('l10n.yaml')
+        ..writeAsStringSync('''
 use-deferred-loading: string
 ''');
 
@@ -109,7 +172,8 @@ use-deferred-loading: string
 
   testWithoutContext('parseLocalizationsOptions tool exits on malformed Yaml', () async {
     final FileSystem fileSystem = MemoryFileSystem.test();
-    final File configFile = fileSystem.file('l10n.yaml')..writeAsStringSync('''
+    final File configFile = fileSystem.file('l10n.yaml')
+      ..writeAsStringSync('''
 template-arb-file: {name}_en.arb
 ''');
 

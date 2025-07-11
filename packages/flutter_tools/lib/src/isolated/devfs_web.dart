@@ -16,6 +16,7 @@ import '../base/file_system.dart';
 import '../base/io.dart';
 import '../base/logger.dart';
 import '../base/net.dart';
+import '../base/platform.dart';
 import '../build_info.dart';
 import '../build_system/tools/shader_compiler.dart';
 import '../bundle_builder.dart';
@@ -29,10 +30,14 @@ import '../web/bootstrap.dart';
 import '../web/chrome.dart';
 import '../web/compile.dart';
 import '../web_template.dart';
-import 'devfs_config.dart';
+
 import 'web_asset_server.dart';
 
+const String kLuciEnvName = 'LUCI_CONTEXT';
 
+/// A web server which handles serving JavaScript and assets.
+///
+/// This is only used in development mode.
 class ConnectionResult {
   ConnectionResult(this.appConnection, this.debugConnection, this.vmService);
 
@@ -55,6 +60,10 @@ class WebDevFS implements DevFS {
   /// [testMode] is true, do not actually initialize dwds or the shelf static
   /// server.
   WebDevFS({
+    required this.hostname,
+    required int port,
+    required this.tlsCertPath,
+    required this.tlsCertKeyPath,
     required this.packagesFilePath,
     required this.urlTunneller,
     required this.useSseForDebugProxy,
@@ -65,18 +74,21 @@ class WebDevFS implements DevFS {
     required this.enableDds,
     required this.entrypoint,
     required this.expressionCompiler,
+    required this.extraHeaders,
     required this.chromiumLauncher,
     required this.nativeNullAssertions,
     required this.ddcModuleSystem,
     required this.canaryFeatures,
-    required this.devConfig,
     required this.webRenderer,
     required this.isWasm,
     required this.useLocalCanvasKit,
     required this.rootDirectory,
-    required this.isWindows,
+    this.useDwdsWebSocketConnection = false,
+    required this.fileSystem,
+    required this.logger,
+    required this.platform,
     this.testMode = false,
-  }) {
+  }) : _port = port {
     // TODO(srujzs): Remove this assertion when the library bundle format is
     // supported without canary mode.
     if (ddcModuleSystem) {
@@ -85,6 +97,7 @@ class WebDevFS implements DevFS {
   }
 
   final Uri entrypoint;
+  final String hostname;
   final String packagesFilePath;
   final UrlTunneller? urlTunneller;
   final bool useSseForDebugProxy;
@@ -93,21 +106,31 @@ class WebDevFS implements DevFS {
   final BuildInfo buildInfo;
   final bool enableDwds;
   final bool enableDds;
+  final Map<String, String> extraHeaders;
   final bool testMode;
   final bool ddcModuleSystem;
   final bool canaryFeatures;
   final ExpressionCompiler? expressionCompiler;
   final ChromiumLauncher? chromiumLauncher;
   final bool nativeNullAssertions;
+  final int _port;
+  final String? tlsCertPath;
+  final String? tlsCertKeyPath;
   final WebRendererMode webRenderer;
   final bool isWasm;
   final bool useLocalCanvasKit;
-  final bool isWindows;
-  final DevConfig devConfig;
+  final bool useDwdsWebSocketConnection;
+  final FileSystem fileSystem;
+  final Logger logger;
+  final Platform platform;
 
   late WebAssetServer webAssetServer;
 
   Dwds get dwds => webAssetServer.dwds;
+
+  /// Whether middleware should be enabled for this web development server.
+  /// Middleware is enabled when using Chrome device or DDC module system.
+  bool get shouldEnableMiddleware => chromiumLauncher != null || ddcModuleSystem;
 
   // A flag to indicate whether we have called `setAssetDirectory` on the target device.
   @override
@@ -121,7 +144,9 @@ class WebDevFS implements DevFS {
 
   /// Connect and retrieve the [DebugConnection] for the current application.
   ///
-  /// Only calls [AppConnection.runMain] on the subsequent connections.
+  /// Only calls [AppConnection.runMain] on the subsequent connections. This
+  /// should be called before the browser is launched to make sure the listener
+  /// is registered early enough.
   Future<ConnectionResult?> connect(
     bool useDebugExtension, {
     @visibleForTesting VmServiceFactory vmServiceFactory = createVmServiceDelegate,
@@ -134,17 +159,16 @@ class WebDevFS implements DevFS {
     _connectedApps = dwds.connectedApps.listen(
       (AppConnection appConnection) async {
         try {
-          final DebugConnection debugConnection =
-              useDebugExtension
-                  ? await (_cachedExtensionFuture ??= dwds.extensionDebugConnections.stream.first)
-                  : await dwds.debugConnection(appConnection);
+          final DebugConnection debugConnection = useDebugExtension
+              ? await (_cachedExtensionFuture ??= dwds.extensionDebugConnections.stream.first)
+              : await dwds.debugConnection(appConnection);
           if (foundFirstConnection) {
             appConnection.runMain();
           } else {
             foundFirstConnection = true;
             final vm_service.VmService vmService = await vmServiceFactory(
               Uri.parse(debugConnection.uri),
-              logger: globals.logger,
+              logger: logger,
             );
             firstConnection.complete(ConnectionResult(appConnection, debugConnection, vmService));
           }
@@ -155,7 +179,7 @@ class WebDevFS implements DevFS {
         }
       },
       onError: (Object error, StackTrace stackTrace) {
-        globals.printError('Unknown error while waiting for debug connection:$error\n$stackTrace');
+        logger.printError('Unknown error while waiting for debug connection:$error\n$stackTrace');
         if (!firstConnection.isCompleted) {
           firstConnection.completeError(error, stackTrace);
         }
@@ -184,6 +208,10 @@ class WebDevFS implements DevFS {
   Future<Uri> create() async {
     webAssetServer = await WebAssetServer.start(
       chromiumLauncher,
+      hostname,
+      _port,
+      tlsCertPath,
+      tlsCertKeyPath,
       urlTunneller,
       useSseForDebugProxy,
       useSseForDebugBackend,
@@ -193,13 +221,18 @@ class WebDevFS implements DevFS {
       enableDds,
       entrypoint,
       expressionCompiler,
+      extraHeaders,
       webRenderer: webRenderer,
       isWasm: isWasm,
       useLocalCanvasKit: useLocalCanvasKit,
       testMode: testMode,
       ddcModuleSystem: ddcModuleSystem,
       canaryFeatures: canaryFeatures,
-      devConfig: devConfig,
+      useDwdsWebSocketConnection: useDwdsWebSocketConnection,
+      fileSystem: fileSystem,
+      logger: logger,
+      platform: platform,
+      shouldEnableMiddleware: shouldEnableMiddleware,
     );
     return baseUri!;
   }
@@ -222,16 +255,14 @@ class WebDevFS implements DevFS {
   final Directory rootDirectory;
 
   Future<void> _validateTemplateFile(String filename) async {
-    final File file = globals.fs.currentDirectory.childDirectory('web').childFile(filename);
+    final File file = fileSystem.currentDirectory.childDirectory('web').childFile(filename);
     if (!await file.exists()) {
       return;
     }
 
     final WebTemplate template = WebTemplate(await file.readAsString());
     for (final WebTemplateWarning warning in template.getWarnings()) {
-      globals.logger.printWarning(
-        'Warning: In $filename:${warning.lineNumber}: ${warning.warningText}',
-      );
+      logger.printWarning('Warning: In $filename:${warning.lineNumber}: ${warning.warningText}');
     }
   }
 
@@ -255,13 +286,13 @@ class WebDevFS implements DevFS {
     File? dartPluginRegistrant,
   }) async {
     lastPackageConfig = packageConfig;
-    final File mainFile = globals.fs.file(mainUri);
+    final File mainFile = fileSystem.file(mainUri);
     final String outputDirectoryPath = mainFile.parent.path;
 
     if (bundleFirstUpload) {
-      webAssetServer.entrypointCacheDirectory = globals.fs.directory(outputDirectoryPath);
+      webAssetServer.entrypointCacheDirectory = fileSystem.directory(outputDirectoryPath);
       generator.addFileSystemRoot(outputDirectoryPath);
-      final String entrypoint = globals.fs.path.basename(mainFile.path);
+      final String entrypoint = fileSystem.path.basename(mainFile.path);
       webAssetServer.writeBytes(entrypoint, mainFile.readAsBytesSync());
       if (ddcModuleSystem) {
         webAssetServer.writeBytes('ddc_module_loader.js', ddcModuleLoaderJS.readAsBytesSync());
@@ -280,17 +311,17 @@ class WebDevFS implements DevFS {
         'main.dart.js',
         ddcModuleSystem
             ? generateDDCLibraryBundleBootstrapScript(
-              entrypoint: entrypoint,
-              ddcModuleLoaderUrl: 'ddc_module_loader.js',
-              mapperUrl: 'stack_trace_mapper.js',
-              generateLoadingIndicator: enableDwds,
-              isWindows: isWindows,
-            )
+                entrypoint: entrypoint,
+                ddcModuleLoaderUrl: 'ddc_module_loader.js',
+                mapperUrl: 'stack_trace_mapper.js',
+                generateLoadingIndicator: shouldEnableMiddleware,
+                isWindows: platform.isWindows,
+              )
             : generateBootstrapScript(
-              requireUrl: 'require.js',
-              mapperUrl: 'stack_trace_mapper.js',
-              generateLoadingIndicator: enableDwds,
-            ),
+                requireUrl: 'require.js',
+                mapperUrl: 'stack_trace_mapper.js',
+                generateLoadingIndicator: shouldEnableMiddleware,
+              ),
       );
       const String onLoadEndBootstrap = 'on_load_end_bootstrap.js';
       if (ddcModuleSystem) {
@@ -300,28 +331,29 @@ class WebDevFS implements DevFS {
         'main_module.bootstrap.js',
         ddcModuleSystem
             ? generateDDCLibraryBundleMainModule(
-              entrypoint: entrypoint,
-              nativeNullAssertions: nativeNullAssertions,
-              onLoadEndBootstrap: onLoadEndBootstrap,
-            )
+                entrypoint: entrypoint,
+                nativeNullAssertions: nativeNullAssertions,
+                onLoadEndBootstrap: onLoadEndBootstrap,
+                isCi: platform.environment.containsKey(kLuciEnvName),
+              )
             : generateMainModule(
-              entrypoint: entrypoint,
-              nativeNullAssertions: nativeNullAssertions,
-              loaderRootDirectory: baseUri.toString(),
-            ),
+                entrypoint: entrypoint,
+                nativeNullAssertions: nativeNullAssertions,
+                loaderRootDirectory: baseUri.toString(),
+              ),
       );
       // TODO(zanderso): refactor the asset code in this and the regular devfs to
       // be shared.
       if (bundle != null) {
         await writeBundle(
-          globals.fs.directory(getAssetBuildDirectory()),
+          fileSystem.directory(getAssetBuildDirectory()),
           bundle.entries,
           targetPlatform: TargetPlatform.web_javascript,
           impellerStatus: ImpellerStatus.disabled,
           processManager: globals.processManager,
-          fileSystem: globals.fs,
+          fileSystem: fileSystem,
           artifacts: globals.artifacts!,
-          logger: globals.logger,
+          logger: logger,
           projectDir: rootDirectory,
           buildMode: buildInfo.mode,
         );
@@ -344,7 +376,7 @@ class WebDevFS implements DevFS {
       outputPath: dillOutputPath,
       packageConfig: packageConfig,
       projectRootPath: projectRootPath,
-      fs: globals.fs,
+      fs: fileSystem,
       dartPluginRegistrant: dartPluginRegistrant,
       recompileRestart: fullRestart,
     );
@@ -369,7 +401,7 @@ class WebDevFS implements DevFS {
     File metadataFile;
     late List<String> modules;
     try {
-      final Directory parentDirectory = globals.fs.directory(outputDirectoryPath);
+      final Directory parentDirectory = fileSystem.directory(outputDirectoryPath);
       codeFile = parentDirectory.childFile('${compilerOutput.outputFilename}.sources');
       manifestFile = parentDirectory.childFile('${compilerOutput.outputFilename}.json');
       sourcemapFile = parentDirectory.childFile('${compilerOutput.outputFilename}.map');
@@ -399,8 +431,8 @@ class WebDevFS implements DevFS {
   }
 
   @visibleForTesting
-  final File requireJS = globals.fs.file(
-    globals.fs.path.join(
+  File get requireJS => fileSystem.file(
+    fileSystem.path.join(
       globals.artifacts!.getArtifactPath(
         Artifact.engineDartSdkPath,
         platform: TargetPlatform.web_javascript,
@@ -413,8 +445,8 @@ class WebDevFS implements DevFS {
   );
 
   @visibleForTesting
-  final File ddcModuleLoaderJS = globals.fs.file(
-    globals.fs.path.join(
+  File get ddcModuleLoaderJS => fileSystem.file(
+    fileSystem.path.join(
       globals.artifacts!.getArtifactPath(
         Artifact.engineDartSdkPath,
         platform: TargetPlatform.web_javascript,
@@ -427,16 +459,16 @@ class WebDevFS implements DevFS {
   );
 
   @visibleForTesting
-  final File flutterJs = globals.fs.file(
-    globals.fs.path.join(
+  File get flutterJs => fileSystem.file(
+    fileSystem.path.join(
       globals.artifacts!.getHostArtifact(HostArtifact.flutterJsDirectory).path,
       'flutter.js',
     ),
   );
 
   @visibleForTesting
-  final File stackTraceMapper = globals.fs.file(
-    globals.fs.path.join(
+  File get stackTraceMapper => fileSystem.file(
+    fileSystem.path.join(
       globals.artifacts!.getArtifactPath(
         Artifact.engineDartSdkPath,
         platform: TargetPlatform.web_javascript,

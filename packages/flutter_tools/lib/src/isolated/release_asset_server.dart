@@ -1,3 +1,7 @@
+// Copyright 2014 The Flutter Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
 import 'dart:async';
 import 'dart:typed_data';
 
@@ -10,7 +14,6 @@ import '../base/platform.dart';
 import '../web/web_constants.dart';
 
 import 'web_server_utlities.dart';
-
 
 class ReleaseAssetServer {
   ReleaseAssetServer(
@@ -69,11 +72,10 @@ class ReleaseAssetServer {
     } else {
       for (final Uri uri in _searchPaths()) {
         final Uri potential = uri.resolve(requestPath);
-        if (!_fileSystem.isFileSync(potential.toFilePath(windows: _platform.isWindows))) {
-          continue;
+        if (_fileSystem.isFileSync(potential.toFilePath(windows: _platform.isWindows))) {
+          fileUri = potential;
+          break;
         }
-        fileUri = potential;
-        break;
       }
     }
     if (fileUri != null) {
