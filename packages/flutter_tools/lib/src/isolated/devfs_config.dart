@@ -13,11 +13,7 @@ import '../base/common.dart';
 import '../globals.dart' as globals;
 import 'devfs_proxy.dart';
 
-<<<<<<< HEAD
-const String devConfigFilePath = 'web/devconfig.yaml';
-=======
 const String devConfigFilePath = '/web_dev_config.yaml';
->>>>>>> intern_silly
 
 @immutable
 class DevConfig {
@@ -32,21 +28,15 @@ class DevConfig {
   factory DevConfig.fromYaml(YamlMap yaml) {
     final Map<String, String> headers = <String, String>{};
     if (yaml['headers'] != null) {
-<<<<<<< HEAD
-      if (yaml['headers'] is! YamlMap) {
-        throwToolExit('Headers must be a Map. Found ${yaml['headers'].runtimeType}');
-      }
-      (yaml['headers'] as YamlMap).forEach((dynamic key, dynamic value) {
-        headers[key.toString()] = value.toString();
-      });
-=======
       if (yaml['headers'] is! YamlList) {
         throwToolExit('Headers must be a List of maps. Found ${yaml['headers'].runtimeType}');
       }
       final YamlList headersList = yaml['headers'] as YamlList;
       for (final dynamic item in headersList) {
         if (item is! YamlMap) {
-          throwToolExit('Each header entry must be a map with "name" and "value" keys. Found ${item.runtimeType}');
+          throwToolExit(
+            'Each header entry must be a map with "name" and "value" keys. Found ${item.runtimeType}',
+          );
         }
         final YamlMap headerMap = item;
         if (!headerMap.containsKey('name') || !headerMap.containsKey('value')) {
@@ -56,11 +46,12 @@ class DevConfig {
         final dynamic value = headerMap['value'];
 
         if (name is! String || value is! String) {
-          throwToolExit('Header "name" and "value" must be strings. Found name: ${name.runtimeType}, value: ${value.runtimeType}');
+          throwToolExit(
+            'Header "name" and "value" must be strings. Found name: ${name.runtimeType}, value: ${value.runtimeType}',
+          );
         }
         headers[name] = value;
       }
->>>>>>> intern_silly
     }
     if (yaml['host'] is! String && yaml['host'] != null) {
       throwToolExit('Host must be a String. Found ${yaml['host'].runtimeType}');
@@ -185,10 +176,9 @@ Future<DevConfig> loadDevConfig({
       }
 
       if (!contents.containsKey('server') || contents['server'] is! YamlMap) {
-        final SourceSpan span =
-            (contents.containsKey('server') && contents['server'] is YamlNode)
-                ? (contents['server'] as YamlNode).span
-                : contents.span;
+        final SourceSpan span = (contents.containsKey('server') && contents['server'] is YamlNode)
+            ? (contents['server'] as YamlNode).span
+            : contents.span;
         throw YamlException(
           '"$devConfigFilePath" file found, but the "server" key is missing or malformed. It must be a YAML map.',
           span,
@@ -203,11 +193,7 @@ Future<DevConfig> loadDevConfig({
       globals.printError('Error: Failed to parse $devConfigFilePath: ${e.message} ${e.span}');
       rethrow;
     } on Exception catch (e) {
-<<<<<<< HEAD
-      globals.printError('An unexpected error occurred while reading devconfig.yaml: $e');
-=======
       globals.printError('An unexpected error occurred while reading $devConfigFilePath: $e');
->>>>>>> intern_silly
       globals.printStatus(
         'Reverting to default flutter_tools web server configuration due to unexpected error.',
       );
