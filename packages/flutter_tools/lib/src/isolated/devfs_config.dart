@@ -13,7 +13,7 @@ import '../base/common.dart';
 import '../globals.dart' as globals;
 import 'devfs_proxy.dart';
 
-const String devConfigFilePath = '/web_dev_config.yaml';
+const String devConfigFilePath = 'web_dev_config.yaml';
 
 @immutable
 class DevConfig {
