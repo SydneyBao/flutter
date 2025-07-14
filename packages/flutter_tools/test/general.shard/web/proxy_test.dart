@@ -1,3 +1,7 @@
+// Copyright 2014 The Flutter Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
 import 'dart:async';
 
 import 'package:flutter_tools/src/globals.dart' as globals;
@@ -57,9 +61,9 @@ void main() {
       'should create RegexProxyRule with regex and no replacement',
       () => testbed.run(() {
         final YamlMap yaml =
-            loadYaml('''
+            loadYaml(r'''
           target: http://localhost:8081
-          regex: ^/users/(\\d+)
+          regex: ^/users/(\d+)
         ''')
                 as YamlMap;
         final ProxyRule? rule = ProxyRule.fromYaml(yaml);
@@ -74,10 +78,10 @@ void main() {
       'should create RegexProxyRule with regex and replacement using capturing groups',
       () => testbed.run(() {
         final YamlMap yaml =
-            loadYaml('''
+            loadYaml(r'''
           target: http://localhost:8081/user-service
-          regex: ^/users/(\\d+)/profile(.*)
-          replace: /user-info/\$1/details\$2
+          regex: ^/users/(\d+)/profile(.*)
+          replace: /user-info/$1/details$2
         ''')
                 as YamlMap;
         final ProxyRule? rule = ProxyRule.fromYaml(yaml);
@@ -92,9 +96,9 @@ void main() {
       'should create RegexProxyRule with regex and empty replacement',
       () => testbed.run(() {
         final YamlMap yaml =
-            loadYaml('''
+            loadYaml(r'''
           target: http://localhost:8081/user-service
-          regex: ^/users/\\d+/profile
+          regex: ^/users/\d+/profile
           replace: ''
         ''')
                 as YamlMap;
@@ -117,7 +121,7 @@ void main() {
         final ProxyRule? rule = ProxyRule.fromYaml(yaml, logger: globals.logger);
 
         expect(rule, isA<RegexProxyRule>());
-        expect((rule! as RegexProxyRule).pattern.pattern, '\\^/invalid\\(');
+        expect((rule! as RegexProxyRule).pattern.pattern, r'\^/invalid\(');
         expect(rule.target, 'http://localhost:8082');
       }),
     );
@@ -156,11 +160,10 @@ void main() {
       pattern: RegExp(r'^/users/(\d+)'),
       target: 'http://example.com',
     );
-
     final RegexProxyRule ruleWithCapturingGroupReplacement = RegexProxyRule(
       pattern: RegExp(r'^/api/v1/users/(\d+)(.*)'),
       target: 'http://backend.com',
-      replacement: '/\$1/profile\$2',
+      replacement: r'/$1/profile$2',
     );
 
     final RegexProxyRule rulePrefixRemovalReplacement = RegexProxyRule(
@@ -173,7 +176,6 @@ void main() {
       target: 'http://static.com',
       replacement: '/assets',
     );
-
     final RegexProxyRule ruleExactMatch = RegexProxyRule(
       pattern: RegExp(r'^/exact_match_only$'),
       target: 'http://exact.com',
@@ -182,7 +184,7 @@ void main() {
     final RegexProxyRule ruleZeroGroup = RegexProxyRule(
       pattern: RegExp(r'^/prefix/(.*)'),
       target: 'http://test.com',
-      replacement: '/all\$0',
+      replacement: r'/all$0',
     );
 
     test('matches should return true for matching regex', () {
@@ -247,7 +249,7 @@ void main() {
       );
     });
 
-    test('replace should handle \$0 (entire match)', () {
+    test(r'replace should handle $0 (entire match)', () {
       expect(ruleZeroGroup.replace('/prefix/something/else'), '/all/prefix/something/else');
     });
 
@@ -258,8 +260,7 @@ void main() {
     test('toString provides useful debug information', () {
       expect(
         ruleNoReplacement.toString(),
-        '{pattern: ^/users/(\\d+)\, target: http://example.com, replacement: null}',
-
+        r'{pattern: ^/users/(\d+), target: http://example.com, replacement: null}',
       );
       expect(
         rulePrefixRemovalReplacement.toString(),
@@ -392,7 +393,6 @@ void main() {
     test('should handle an empty request body', () async {
       final Uri originalUrl = Uri.parse('http://original.example.com/empty');
       final Uri finalTargetUrl = Uri.parse('http://target.example.com/empty-new');
-
       final Request originalRequest = Request('GET', originalUrl);
 
       final Request proxiedRequest = proxyRequest(originalRequest, finalTargetUrl);
@@ -447,31 +447,5 @@ void main() {
       expect(response.statusCode, 200);
       expect(await response.readAsString(), 'Inner Handler Response');
     });
-
-    test('should call inner handler if proxying throws an exception', () async {
-      final List<ProxyRule> rules = <ProxyRule>[
-        RegexProxyRule(pattern: RegExp(r'^/api/error'), target: 'http://invalid-url.com'),
-      ];
-
-      final Middleware middleware = proxyMiddleware(rules);
-
-      bool innerHandlerCalled = false;
-      FutureOr<Response> innerHandler(Request request) {
-        innerHandlerCalled = true;
-        return Response.ok('Inner Handler Response on Error');
-      }
-
-      final Request request = Request('GET', Uri.parse('http://localhost:8080/api/error/test'));
-      final Response response = await middleware(innerHandler)(request);
-
-      expect(innerHandlerCalled, isTrue);
-      expect(response.statusCode, 200);
-      expect(await response.readAsString(), 'Inner Handler Response on Error');
-      expect(
-        globals.logger.toString(),
-        contains('Proxy error for http://invalid-url.com/api/error/test: '),
-      );
-      expect(globals.logger.toString(), contains('Allowing fall-through.'));
-    }, skip: true);
   });
 }
