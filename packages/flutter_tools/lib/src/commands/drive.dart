@@ -26,6 +26,7 @@ import '../drive/drive_service.dart';
 import '../drive/web_driver_service.dart' show Browser;
 import '../globals.dart' as globals;
 import '../ios/devices.dart';
+import '../isolated/devfs_config.dart';
 import '../resident_runner.dart';
 import '../runner/flutter_command.dart'
     show FlutterCommandCategory, FlutterCommandResult, FlutterOptions;
@@ -186,8 +187,8 @@ class DriveCommand extends RunCommandBase {
       );
   }
 
-  static const String _kKeepAppRunning = 'keep-app-running';
-  static const String _kUseExistingApp = 'use-existing-app';
+  static const _kKeepAppRunning = 'keep-app-running';
+  static const _kUseExistingApp = 'use-existing-app';
 
   final Signals signals;
 
@@ -216,10 +217,10 @@ class DriveCommand extends RunCommandBase {
   Map<ProcessSignal, Object>? screenshotTokens;
 
   @override
-  final String name = 'drive';
+  final name = 'drive';
 
   @override
-  final String description =
+  final description =
       'Builds and installs the app, and runs a Dart program that connects to '
       'the app, often to run externally facing integration tests, such as with '
       'package:test and package:flutter_driver.\n'
@@ -230,7 +231,7 @@ class DriveCommand extends RunCommandBase {
   String get category => FlutterCommandCategory.project;
 
   @override
-  final List<String> aliases = <String>['driver'];
+  final aliases = <String>['driver'];
 
   String? get userIdentifier => stringArg(FlutterOptions.kDeviceUser);
 
@@ -304,7 +305,14 @@ class DriveCommand extends RunCommandBase {
       _logger.printError('Screenshot not supported for ${device.displayName}.');
     }
 
-    final bool web = device is WebServerDevice || device is ChromiumDevice;
+    final DevConfig? devConfig = (device is WebServerDevice || device is ChromiumDevice)
+        ? await loadDevConfig(
+            hostname: stringArg('web-hostname'),
+            port: stringArg('web-port'),
+            tlsCertPath: stringArg('web-tls-cert-path'),
+            tlsCertKeyPath: stringArg('web-tls-cert-key-path'),
+          )
+        : null;
     _flutterDriverFactory ??= FlutterDriverFactory(
       applicationPackageFactory: ApplicationPackageFactory.instance!,
       logger: _logger,
@@ -322,14 +330,16 @@ class DriveCommand extends RunCommandBase {
       logger: _logger,
       throwOnError: false,
     );
-    final DriverService driverService = _flutterDriverFactory!.createDriverService(web);
+    final DriverService driverService = _flutterDriverFactory!.createDriverService(
+      devConfig != null,
+    );
     final BuildInfo buildInfo = await getBuildInfo();
-    final DebuggingOptions debuggingOptions = await createDebuggingOptions(web);
+    final DebuggingOptions debuggingOptions = await createDebuggingOptions(devConfig: devConfig);
     final File? applicationBinary = applicationBinaryPath == null
         ? null
         : _fileSystem.file(applicationBinaryPath);
 
-    bool screenshotTaken = false;
+    var screenshotTaken = false;
     try {
       if (stringArg(_kUseExistingApp) == null) {
         await driverService.start(
@@ -342,7 +352,7 @@ class DriveCommand extends RunCommandBase {
           mainPath: targetFile,
           platformArgs: <String, Object>{
             if (traceStartup) 'trace-startup': traceStartup,
-            if (web) '--no-launch-chrome': true,
+            if (devConfig != null) '--no-launch-chrome': true,
           },
         );
       } else {
@@ -441,7 +451,7 @@ class DriveCommand extends RunCommandBase {
 
   void _registerScreenshotCallbacks(Device device, Directory screenshotDir) {
     _logger.printTrace('Registering signal handlers...');
-    final Map<ProcessSignal, Object> tokens = <ProcessSignal, Object>{};
+    final tokens = <ProcessSignal, Object>{};
     for (final ProcessSignal signal in signalsToHandle) {
       tokens[signal] = signals.addHandler(signal, (ProcessSignal signal) {
         _unregisterScreenshotCallbacks();

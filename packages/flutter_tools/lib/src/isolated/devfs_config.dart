@@ -68,7 +68,7 @@ class DevConfig {
       if (yaml['proxy'] is! YamlList) {
         throwToolExit('Proxy must be a list. Found ${yaml['proxy'].runtimeType}');
       }
-      final YamlList proxyList = yaml['proxy'] as YamlList;
+      final proxyList = yaml['proxy'] as YamlList;
       for (final dynamic item in proxyList) {
         if (item is YamlMap) {
           final ProxyRule? rule = ProxyRule.fromYaml(item);
