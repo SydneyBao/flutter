@@ -20,36 +20,36 @@ void main() {
 
   group('ProxyRule.fromYaml', () {
     test(
-      'should create SourceProxyRule with source and no replacement',
+      'should create PrefixProxyRule with prefix and no replacement',
       () => testbed.run(() {
         final yaml =
             loadYaml('''
           target: http://localhost:8080
-          source: /api
+          prefix: /api
         ''')
                 as YamlMap;
         final ProxyRule? rule = ProxyRule.fromYaml(yaml);
 
-        expect(rule, isA<SourceProxyRule>());
-        expect((rule! as SourceProxyRule).source, '/api');
+        expect(rule, isA<PrefixProxyRule>());
+        expect((rule! as PrefixProxyRule).prefix, '/api');
         expect(rule.target, 'http://localhost:8080');
       }),
     );
 
     test(
-      'should create SourceProxyRule with source and replacement',
+      'should create PrefixProxyRule with prefix and replacement',
       () => testbed.run(() {
         final yaml =
             loadYaml('''
           target: http://localhost:8080
-          source: /api
+          prefix: /api
           replace: /new_api
         ''')
                 as YamlMap;
         final ProxyRule? rule = ProxyRule.fromYaml(yaml);
 
-        expect(rule, isA<SourceProxyRule>());
-        expect((rule! as SourceProxyRule).source, '/api');
+        expect(rule, isA<PrefixProxyRule>());
+        expect((rule! as PrefixProxyRule).prefix, '/api');
         expect(rule.target, 'http://localhost:8080');
         expect(rule.replace('/api/users'), '/new_api/users');
         expect(rule.replace('/api/'), '/new_api/');
@@ -131,7 +131,7 @@ void main() {
       () => testbed.run(() {
         final yaml =
             loadYaml('''
-          source: /api
+          prefix: /api
         ''')
                 as YamlMap;
         final ProxyRule? rule = ProxyRule.fromYaml(yaml, logger: globals.logger);
@@ -141,7 +141,7 @@ void main() {
     );
 
     test(
-      'should return null if neither source nor regex is provided',
+      'should return null if neither prefix nor regex is provided',
       () => testbed.run(() {
         final yaml =
             loadYaml('''
@@ -271,27 +271,27 @@ void main() {
     });
   });
 
-  group('SourceProxyRule', () {
-    final ruleNoReplacement = SourceProxyRule(source: '/assets/', target: 'http://cdn.example.com');
+  group('PrefixProxyRule', () {
+    final ruleNoReplacement = PrefixProxyRule(prefix: '/assets/', target: 'http://cdn.example.com');
 
-    final ruleWithReplacement = SourceProxyRule(
-      source: '/old-assets/',
+    final ruleWithReplacement = PrefixProxyRule(
+      prefix: '/old-assets/',
       target: 'http://cdn.example.com',
       replacement: '/new-assets/',
     );
 
-    final ruleEmptyReplacement = SourceProxyRule(
-      source: '/remove-me/',
+    final ruleEmptyReplacement = PrefixProxyRule(
+      prefix: '/remove-me/',
       target: 'http://cdn.example.com',
       replacement: '',
     );
-    final ruleSlashReplacement = SourceProxyRule(
-      source: '/remove-me-too',
+    final ruleSlashReplacement = PrefixProxyRule(
+      prefix: '/remove-me-too',
       target: 'http://cdn.example.com',
       replacement: '/',
     );
 
-    test('matches should return true for matching source', () {
+    test('matches should return true for matching prefix', () {
       expect(ruleNoReplacement.matches('/assets/image.png'), isTrue);
       expect(ruleWithReplacement.matches('/old-assets/script.js'), isTrue);
       expect(ruleEmptyReplacement.matches('/remove-me/now'), isTrue);
@@ -299,7 +299,7 @@ void main() {
       expect(ruleSlashReplacement.matches('/remove-me-too/please'), isTrue);
     });
 
-    test('matches should return false for non-matching source', () {
+    test('matches should return false for non-matching prefix', () {
       expect(ruleNoReplacement.matches('/data/assets/image.png'), isFalse);
       expect(ruleWithReplacement.matches('/old/assets/script.js'), isFalse);
       expect(ruleWithReplacement.matches('/old-assets-prefix/script.js'), isFalse);
@@ -310,7 +310,7 @@ void main() {
       expect(ruleNoReplacement.replace('/assets/document.pdf'), '/assets/document.pdf');
     });
 
-    test('replace should apply replacement for matching source', () {
+    test('replace should apply replacement for matching prefix', () {
       expect(ruleWithReplacement.replace('/old-assets/style.css'), '/new-assets/style.css');
       expect(ruleWithReplacement.replace('/old-assets/'), '/new-assets/');
     });
@@ -332,17 +332,17 @@ void main() {
       expect(ruleSlashReplacement.replace('/remove-me-too/remove-me-too/'), '//remove-me-too/');
     });
 
-    test('replace should return original path for non-matching source', () {
+    test('replace should return original path for non-matching prefix', () {
       expect(ruleWithReplacement.replace('/other-path/file.txt'), '/other-path/file.txt');
     });
     test('toString provides useful debug information', () {
       expect(
         ruleNoReplacement.toString(),
-        '{source: /assets/, target: http://cdn.example.com, replacement: null}',
+        '{prefix: /assets/, target: http://cdn.example.com, replacement: null}',
       );
       expect(
         ruleWithReplacement.toString(),
-        '{source: /old-assets/, target: http://cdn.example.com, replacement: /new-assets/}',
+        '{prefix: /old-assets/, target: http://cdn.example.com, replacement: /new-assets/}',
       );
     });
   });
@@ -366,7 +366,7 @@ void main() {
         body: originalBody,
         context: originalContext,
       );
-      final Request proxiedRequest = proxyRequest(originalRequest, finalTargetUrl);
+      final Request proxiedRequest = proxyRequest(originalRequest, finalTargetUrl, {});
 
       final expectedHeadersFiltered = Map<String, String>.fromEntries(
         originalHeaders.entries.where(
@@ -392,7 +392,7 @@ void main() {
 
       final originalRequest = Request('GET', originalUrl);
 
-      final Request proxiedRequest = proxyRequest(originalRequest, finalTargetUrl);
+      final Request proxiedRequest = proxyRequest(originalRequest, finalTargetUrl, {});
 
       expect(proxiedRequest.method, 'GET');
       expect(proxiedRequest.url.toString(), 'empty-new');
@@ -411,7 +411,7 @@ void main() {
           body: method == 'PUT' || method == 'PATCH' ? '{"key": "value"}' : null,
         );
 
-        final Request proxiedRequest = proxyRequest(originalRequest, finalTargetUrl);
+        final Request proxiedRequest = proxyRequest(originalRequest, finalTargetUrl, {});
         expect(proxiedRequest.method, method, reason: 'Method "$method" should be preserved');
 
         if (method == 'PUT' || method == 'PATCH') {
@@ -420,6 +420,59 @@ void main() {
           expect(await proxiedRequest.readAsString(), '');
         }
       }
+    });
+
+    test('should correctly add and overwrite additional headers', () async {
+      final Uri originalUrl = Uri.parse('http://original.example.com/path');
+      final Uri finalTargetUrl = Uri.parse('http://target.example.com/newpath');
+      const originalBody = 'Test Body Content';
+      final originalContext = <String, Object>{'session_id': 'abc123'};
+      final originalHeaders = <String, String>{
+        'Accept': 'application/json',
+        'X-Original-Id': '12345',
+        'Authorization': 'Bearer original_token',
+        'content-length': 'ignored_by_shelf',
+      };
+
+      final ruleHeaders = <String, String>{
+        'X-Added-Header': 'new_value',
+        'Authorization': 'Bearer new_token',
+        'User-Agent': 'ShelfProxyTest/1.0',
+      };
+
+      final originalRequest = Request(
+        'GET',
+        originalUrl,
+        headers: originalHeaders,
+        body: originalBody,
+        context: originalContext,
+      );
+
+      final Request proxiedRequest = proxyRequest(originalRequest, finalTargetUrl, ruleHeaders);
+
+      final expectedHeaders = <String, String>{
+        'Accept': 'application/json',
+        'X-Original-Id': '12345',
+        'X-Added-Header': 'new_value',
+        'Authorization': 'Bearer new_token',
+        'User-Agent': 'ShelfProxyTest/1.0',
+      };
+
+      expect(proxiedRequest.method, 'GET');
+      expect(proxiedRequest.url.toString(), 'newpath');
+      expect(proxiedRequest.context, originalContext);
+
+      for (final MapEntry<String, String> entry in expectedHeaders.entries) {
+        expect(proxiedRequest.headers, containsPair(entry.key, entry.value));
+      }
+
+      expect(proxiedRequest.headers['Authorization'], 'Bearer new_token');
+      expect(proxiedRequest.headers['Accept'], 'application/json');
+      expect(proxiedRequest.headers['X-Original-Id'], '12345');
+      expect(proxiedRequest.headers['X-Added-Header'], 'new_value');
+      expect(proxiedRequest.headers['User-Agent'], 'ShelfProxyTest/1.0');
+      final String proxiedBody = await proxiedRequest.readAsString();
+      expect(proxiedBody, originalBody);
     });
   });
 

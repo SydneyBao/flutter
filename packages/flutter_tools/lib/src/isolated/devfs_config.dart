@@ -15,6 +15,34 @@ import 'devfs_proxy.dart';
 
 const devConfigFilePath = 'web_dev_config.yaml';
 
+Map<String, String> getHeaders(YamlList? headersList) {
+  final Map<String, String> headers = {};
+
+  if (headersList != null) {
+    for (final dynamic item in headersList) {
+      if (item is! YamlMap) {
+        throwToolExit(
+          'Each header entry must be a map with "name" and "value" keys. Found ${item.runtimeType}',
+        );
+      }
+      final YamlMap headerMap = item;
+      if (!headerMap.containsKey('name') || !headerMap.containsKey('value')) {
+        throwToolExit('Each header entry must contain "name" and "value" keys.');
+      }
+      final dynamic name = headerMap['name'];
+      final dynamic value = headerMap['value'];
+
+      if (name is! String || value is! String) {
+        throwToolExit(
+          'Header "name" and "value" must be strings. Found name: ${name.runtimeType}, value: ${value.runtimeType}',
+        );
+      }
+      headers[name] = value;
+    }
+  }
+  return headers;
+}
+
 @immutable
 class DevConfig {
   const DevConfig({
@@ -32,26 +60,7 @@ class DevConfig {
         throwToolExit('Headers must be a List of maps. Found ${yaml['headers'].runtimeType}');
       }
       final headersList = yaml['headers'] as YamlList;
-      for (final dynamic item in headersList) {
-        if (item is! YamlMap) {
-          throwToolExit(
-            'Each header entry must be a map with "name" and "value" keys. Found ${item.runtimeType}',
-          );
-        }
-        final YamlMap headerMap = item;
-        if (!headerMap.containsKey('name') || !headerMap.containsKey('value')) {
-          throwToolExit('Each header entry must contain "name" and "value" keys.');
-        }
-        final dynamic name = headerMap['name'];
-        final dynamic value = headerMap['value'];
-
-        if (name is! String || value is! String) {
-          throwToolExit(
-            'Header "name" and "value" must be strings. Found name: ${name.runtimeType}, value: ${value.runtimeType}',
-          );
-        }
-        headers[name] = value;
-      }
+      headers.addAll(getHeaders(headersList));
     }
     if (yaml['host'] is! String && yaml['host'] != null) {
       throwToolExit('Host must be a String. Found ${yaml['host'].runtimeType}');
