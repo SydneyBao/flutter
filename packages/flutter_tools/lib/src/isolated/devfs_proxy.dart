@@ -65,7 +65,7 @@ abstract class ProxyRule {
         headers: headers,
       );
     } else {
-      effectiveLogger.printError("'prefix' or 'regex' field must be provided");
+      effectiveLogger.printError("'prefix', 'regex' or 'source' field must be provided");
       return null;
     }
   }
