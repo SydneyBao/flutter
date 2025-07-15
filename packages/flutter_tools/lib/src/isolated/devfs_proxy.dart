@@ -17,20 +17,21 @@ abstract class ProxyRule {
 
   static ProxyRule? fromYaml(YamlMap yaml, {Logger? logger}) {
     final target = yaml['target'] as String?;
-    final source = yaml['source'] as String?;
+    final prefix = yaml['prefix'] as String?;
     final regex = yaml['regex'] as String?;
     final replace = yaml['replace'] as String?;
     final Logger effectiveLogger = logger ?? globals.logger;
 
     if (target == null) {
-      final String? path = source ?? regex;
+      final String? path = prefix ?? regex;
       effectiveLogger.printError("Invalid 'target' for path: $path. 'target' cannot be null");
       return null;
     }
-    RegExp? proxyPattern;
-    if (source != null && source.isNotEmpty) {
-      return SourceProxyRule(source: source, target: target, replacement: replace?.trim());
+
+    if (prefix != null && prefix.isNotEmpty) {
+      return PrefixProxyRule(prefix: prefix, target: target, replacement: replace?.trim());
     } else if (regex != null && regex.isNotEmpty) {
+      RegExp? proxyPattern;
       try {
         proxyPattern = RegExp(regex.trim());
       } on FormatException catch (e) {
@@ -41,7 +42,7 @@ abstract class ProxyRule {
       }
       return RegexProxyRule(pattern: proxyPattern, target: target, replacement: replace?.trim());
     } else {
-      effectiveLogger.printError("'source' or 'regex' field must be provided");
+      effectiveLogger.printError("'prefix' or 'regex' field must be provided");
       return null;
     }
   }
@@ -79,14 +80,14 @@ class RegexProxyRule extends ProxyRule {
   }
 }
 
-class SourceProxyRule extends ProxyRule {
-  SourceProxyRule({required this.source, required super.target, this.replacement});
-  final String source;
+class PrefixProxyRule extends ProxyRule {
+  PrefixProxyRule({required this.prefix, required super.target, this.replacement});
+  final String prefix;
   final String? replacement;
 
   @override
   bool matches(String path) {
-    return path.startsWith(source);
+    return path.startsWith(prefix);
   }
 
   @override
@@ -94,12 +95,12 @@ class SourceProxyRule extends ProxyRule {
     if (replacement == null) {
       return path;
     }
-    return path.replaceFirst(source, replacement!);
+    return path.replaceFirst(prefix, replacement!);
   }
 
   @override
   String toString() {
-    return '{source: $source, target: $target, replacement: ${replacement ?? 'null'}}';
+    return '{prefix: $prefix, target: $target, replacement: ${replacement ?? 'null'}}';
   }
 }
 

@@ -30,8 +30,8 @@ void main() {
                 as YamlMap;
         final ProxyRule? rule = ProxyRule.fromYaml(yaml);
 
-        expect(rule, isA<SourceProxyRule>());
-        expect((rule! as SourceProxyRule).source, '/api');
+        expect(rule, isA<PrefixProxyRule>());
+        expect((rule! as PrefixProxyRule).prefix, '/api');
         expect(rule.target, 'http://localhost:8080');
       }),
     );
@@ -48,8 +48,8 @@ void main() {
                 as YamlMap;
         final ProxyRule? rule = ProxyRule.fromYaml(yaml);
 
-        expect(rule, isA<SourceProxyRule>());
-        expect((rule! as SourceProxyRule).source, '/api');
+        expect(rule, isA<PrefixProxyRule>());
+        expect((rule! as PrefixProxyRule).prefix, '/api');
         expect(rule.target, 'http://localhost:8080');
         expect(rule.replace('/api/users'), '/new_api/users');
         expect(rule.replace('/api/'), '/new_api/');
@@ -272,21 +272,21 @@ void main() {
   });
 
   group('SourceProxyRule', () {
-    final ruleNoReplacement = SourceProxyRule(source: '/assets/', target: 'http://cdn.example.com');
+    final ruleNoReplacement = PrefixProxyRule(prefix: '/assets/', target: 'http://cdn.example.com');
 
-    final ruleWithReplacement = SourceProxyRule(
-      source: '/old-assets/',
+    final ruleWithReplacement = PrefixProxyRule(
+      prefix: '/old-assets/',
       target: 'http://cdn.example.com',
       replacement: '/new-assets/',
     );
 
-    final ruleEmptyReplacement = SourceProxyRule(
-      source: '/remove-me/',
+    final ruleEmptyReplacement = PrefixProxyRule(
+      prefix: '/remove-me/',
       target: 'http://cdn.example.com',
       replacement: '',
     );
-    final ruleSlashReplacement = SourceProxyRule(
-      source: '/remove-me-too',
+    final ruleSlashReplacement = PrefixProxyRule(
+      prefix: '/remove-me-too',
       target: 'http://cdn.example.com',
       replacement: '/',
     );
