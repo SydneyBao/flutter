@@ -9,9 +9,10 @@ import '/src/base/logger.dart';
 import '../globals.dart' as globals;
 
 abstract class ProxyRule {
-  ProxyRule({required this.target});
+  ProxyRule({required this.target, this.replacement});
 
   final String target;
+  final String? replacement;
   String replace(String path);
   bool matches(String path);
 
@@ -31,16 +32,20 @@ abstract class ProxyRule {
     if (prefix != null && prefix.isNotEmpty) {
       return PrefixProxyRule(prefix: prefix, target: target, replacement: replace?.trim());
     } else if (regex != null && regex.isNotEmpty) {
-      RegExp? proxyPattern;
+      RegExp? regexPattern;
       try {
-        proxyPattern = RegExp(regex.trim());
+        regexPattern = RegExp(regex.trim());
       } on FormatException catch (e) {
-        proxyPattern = RegExp(RegExp.escape(regex));
+        regexPattern = RegExp(RegExp.escape(regex));
         effectiveLogger.printWarning(
           "Invalid regex pattern in replace 'regex': '$regex'. Treating $regex as string. Error: $e",
         );
       }
-      return RegexProxyRule(pattern: proxyPattern, target: target, replacement: replace?.trim());
+      return RegexProxyRule(
+        regexPattern: regexPattern,
+        target: target,
+        replacement: replace?.trim(),
+      );
     } else {
       effectiveLogger.printError("'prefix' or 'regex' field must be provided");
       return null;
@@ -49,22 +54,18 @@ abstract class ProxyRule {
 }
 
 class RegexProxyRule extends ProxyRule {
-  RegexProxyRule({required this.pattern, required super.target, this.replacement});
+  RegexProxyRule({required this.regexPattern, required super.target, super.replacement});
 
-  final RegExp pattern;
-  final String? replacement;
+  final RegExp regexPattern;
 
   @override
   bool matches(String path) {
-    return pattern.hasMatch(path);
+    return regexPattern.hasMatch(path);
   }
 
   @override
   String replace(String path) {
-    if (replacement == null) {
-      return path;
-    }
-    return path.replaceAllMapped(pattern, (Match match) {
+    return path.replaceAllMapped(regexPattern, (Match match) {
       String result = replacement!;
 
       for (var i = 0; i <= match.groupCount; i++) {
@@ -76,14 +77,13 @@ class RegexProxyRule extends ProxyRule {
 
   @override
   String toString() {
-    return '{pattern: ${pattern.pattern}, target: $target, replacement: ${replacement ?? 'null'}}';
+    return '{pattern: ${regexPattern.pattern}, target: $target, replacement: ${replacement ?? 'null'}}';
   }
 }
 
 class PrefixProxyRule extends ProxyRule {
-  PrefixProxyRule({required this.prefix, required super.target, this.replacement});
+  PrefixProxyRule({required this.prefix, required super.target, super.replacement});
   final String prefix;
-  final String? replacement;
 
   @override
   bool matches(String path) {
@@ -92,9 +92,6 @@ class PrefixProxyRule extends ProxyRule {
 
   @override
   String replace(String path) {
-    if (replacement == null) {
-      return path;
-    }
     return path.replaceFirst(prefix, replacement!);
   }
 
@@ -128,7 +125,9 @@ shelf.Middleware proxyMiddleware(List<ProxyRule> effectiveProxy) {
       for (final rule in effectiveProxy) {
         if (rule.matches(requestPath)) {
           final Uri targetBaseUri = Uri.parse(rule.target);
-          final String rewrittenRequest = rule.replace(requestPath);
+          final String rewrittenRequest = rule.replacement != null
+              ? rule.replace(requestPath)
+              : requestPath;
           final Uri finalTargetUrl = targetBaseUri.resolve(rewrittenRequest);
           try {
             final shelf.Request proxyBackendRequest = proxyRequest(request, finalTargetUrl);

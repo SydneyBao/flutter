@@ -69,7 +69,7 @@ void main() {
         final ProxyRule? rule = ProxyRule.fromYaml(yaml);
 
         expect(rule, isA<RegexProxyRule>());
-        expect((rule! as RegexProxyRule).pattern.pattern, r'^/users/(\d+)');
+        expect((rule! as RegexProxyRule).regexPattern.pattern, r'^/users/(\d+)');
         expect(rule.target, 'http://localhost:8081');
       }),
     );
@@ -121,7 +121,7 @@ void main() {
         final ProxyRule? rule = ProxyRule.fromYaml(yaml, logger: globals.logger);
 
         expect(rule, isA<RegexProxyRule>());
-        expect((rule! as RegexProxyRule).pattern.pattern, r'\^/invalid\(');
+        expect((rule! as RegexProxyRule).regexPattern.pattern, r'\^/invalid\(');
         expect(rule.target, 'http://localhost:8082');
       }),
     );
@@ -157,34 +157,34 @@ void main() {
 
   group('RegexProxyRule', () {
     final ruleNoReplacement = RegexProxyRule(
-      pattern: RegExp(r'^/users/(\d+)'),
+      regexPattern: RegExp(r'^/users/(\d+)'),
       target: 'http://example.com',
     );
 
     final ruleWithCapturingGroupReplacement = RegexProxyRule(
-      pattern: RegExp(r'^/api/v1/users/(\d+)(.*)'),
+      regexPattern: RegExp(r'^/api/v1/users/(\d+)(.*)'),
       target: 'http://backend.com',
       replacement: r'/$1/profile$2',
     );
 
     final rulePrefixRemovalReplacement = RegexProxyRule(
-      pattern: RegExp(r'^/old_path'),
+      regexPattern: RegExp(r'^/old_path'),
       target: 'http://legacy.com',
       replacement: '/new_path',
     );
     final ruleMiddlePattern = RegexProxyRule(
-      pattern: RegExp(r'/test_static'),
+      regexPattern: RegExp(r'/test_static'),
       target: 'http://static.com',
       replacement: '/assets',
     );
 
     final ruleExactMatch = RegexProxyRule(
-      pattern: RegExp(r'^/exact_match_only$'),
+      regexPattern: RegExp(r'^/exact_match_only$'),
       target: 'http://exact.com',
       replacement: '/found',
     );
     final ruleZeroGroup = RegexProxyRule(
-      pattern: RegExp(r'^/prefix/(.*)'),
+      regexPattern: RegExp(r'^/prefix/(.*)'),
       target: 'http://test.com',
       replacement: r'/all$0',
     );
@@ -229,7 +229,7 @@ void main() {
 
     test('replace should match exactly', () {
       final rule = RegexProxyRule(
-        pattern: RegExp(r'/temp1'),
+        regexPattern: RegExp(r'/temp1'),
         target: 'http://legacy.com',
         replacement: '/temp2/',
       );
@@ -426,7 +426,7 @@ void main() {
   group('proxyMiddleware', () {
     test('should call inner handler if no rule matches', () async {
       final rules = <ProxyRule>[
-        RegexProxyRule(pattern: RegExp(r'^/other_api'), target: 'http://mock-backend.com'),
+        RegexProxyRule(regexPattern: RegExp(r'^/other_api'), target: 'http://mock-backend.com'),
       ];
 
       final Middleware middleware = proxyMiddleware(rules);
